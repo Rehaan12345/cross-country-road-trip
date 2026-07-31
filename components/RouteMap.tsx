@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 // maplibre-gl v6 has no default export.
 import { MapLibreMap, LngLatBounds } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
@@ -29,20 +29,41 @@ function coordsOf(g: Geometry | null): [number, number][] {
   return [];
 }
 
-export default function RouteMap({ geojson }: { geojson: Geometry | null }) {
+export default function RouteMap({
+  geojson,
+  className = "map",
+}: {
+  geojson: Geometry | null;
+  className?: string;
+}) {
   const container = useRef<HTMLDivElement>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!container.current) return;
 
-    const map = new MapLibreMap({
-      container: container.current,
-      style: MAP_STYLE,
-      attributionControl: { compact: true },
-      // Open on the US so the map is framed correctly from the first paint,
-      // with no flash of world view before the route bounds are applied.
-      bounds: US_BOUNDS,
-      fitBoundsOptions: { padding: 20 },
+    let map: MapLibreMap;
+    try {
+      map = new MapLibreMap({
+        container: container.current,
+        style: MAP_STYLE,
+        attributionControl: { compact: true },
+        // Open on the US so the map is framed correctly from the first paint,
+        // with no flash of world view before the route bounds are applied.
+        bounds: US_BOUNDS,
+        fitBoundsOptions: { padding: 20 },
+      });
+    } catch (e) {
+      // Most likely no WebGL context available.
+      setError(e instanceof Error ? e.message : "Map failed to initialise");
+      return;
+    }
+
+    // Tile/style/network failures are otherwise silent — the map just stays blank.
+    map.on("error", (e) => {
+      const msg = e.error?.message ?? "Map error";
+      console.error("[map]", msg, e);
+      setError(msg);
     });
 
     map.on("load", () => {
@@ -73,5 +94,9 @@ export default function RouteMap({ geojson }: { geojson: Geometry | null }) {
     return () => map.remove();
   }, [geojson]);
 
-  return <div className="map" ref={container} />;
+  return (
+    <div className={className} ref={container}>
+      {error && <div className="map-error">Map error: {error}</div>}
+    </div>
+  );
 }

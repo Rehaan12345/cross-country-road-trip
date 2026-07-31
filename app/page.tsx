@@ -1,12 +1,28 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import dynamicImport from "next/dynamic";
 import Nav from "@/components/Nav";
+import { fetchJson } from "@/lib/api";
+import { miles } from "@/lib/format";
+
+// MapLibre is large and touches window on import — keep it off the server and
+// out of the shared bundle.
+const RouteMap = dynamicImport(() => import("@/components/RouteMap"), {
+  ssr: false,
+  loading: () => <div className="map map-loading">Loading map…</div>,
+});
 
 type Status = {
   trip: { id: string; started_at: string } | null;
   stats: { distance_m: number; moving_s: number; point_count: number } | null;
   lastPingAt: string | null;
+};
+
+type Journey = {
+  geojson: never;
+  totalMeters: number;
+  tripCount: number;
 };
 
 const POLL_MS = 10_000;
@@ -32,16 +48,24 @@ function health(lastPingAt: string | null, now: number) {
 
 export default function Home() {
   const [status, setStatus] = useState<Status | null>(null);
+  const [journey, setJourney] = useState<Journey | null>(null);
+  const [loadError, setLoadError] = useState("");
   const [now, setNow] = useState(() => Date.now());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   const refresh = useCallback(async () => {
     try {
-      const res = await fetch("/api/status", { cache: "no-store" });
-      if (res.ok) setStatus(await res.json());
-    } catch {
-      // Offline in a dead zone is expected; keep showing the last known state.
+      const [s, j] = await Promise.all([
+        fetchJson<Status>("/api/status"),
+        fetchJson<Journey>("/api/journey"),
+      ]);
+      setStatus(s);
+      setJourney(j);
+      setLoadError("");
+    } catch (e) {
+      // Dead zones are expected; keep the last known state but say so.
+      setLoadError(e instanceof Error ? e.message : "Could not reach the server");
     }
   }, []);
 
@@ -64,7 +88,7 @@ export default function Home() {
 
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      setError(body.error ?? "Something went wrong");
+      setError(body.error ?? `Request failed (${res.status})`);
     }
 
     await refresh();
@@ -74,7 +98,7 @@ export default function Home() {
   const active = status?.trip ?? null;
   const h = health(status?.lastPingAt ?? null, now);
   const elapsedS = active ? (now - new Date(active.started_at).getTime()) / 1000 : 0;
-  const miles = status?.stats ? status.stats.distance_m / 1609.34 : 0;
+  const tripMiles = status?.stats ? status.stats.distance_m / 1609.34 : 0;
 
   return (
     <main>
@@ -86,12 +110,14 @@ export default function Home() {
         <span className="health-value">{h.text}</span>
       </div>
 
+      {loadError && <div className="error">{loadError}</div>}
+
       {active ? (
         <div className="stats">
           <div className="stat">
             <div className="stat-label">Distance</div>
             <div className="stat-value">
-              {miles.toFixed(1)}
+              {tripMiles.toFixed(1)}
               <span className="unit">mi</span>
             </div>
           </div>
@@ -106,6 +132,16 @@ export default function Home() {
       ) : (
         <div className="idle">No trip running</div>
       )}
+
+      <RouteMap geojson={journey?.geojson ?? null} className="map map-compact" />
+
+      <div className="journey-total">
+        <span className="stat-label">Journey</span>
+        <span>
+          <strong>{miles(journey?.totalMeters ?? 0)}</strong> mi ·{" "}
+          {journey?.tripCount ?? 0} trips
+        </span>
+      </div>
 
       <div className="spacer" />
 

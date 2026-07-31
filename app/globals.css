@@ -222,6 +222,38 @@ form.login input {
   padding: 0 8px;
 }
 
+.map-compact {
+  height: 34dvh;
+  min-height: 200px;
+}
+
+.map-error {
+  margin: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.7);
+  color: var(--bad);
+  font-size: 12px;
+}
+
+.journey-total {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  font-size: 14px;
+  color: var(--muted);
+}
+.journey-total strong {
+  color: var(--text);
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+}
+
 .map-loading {
   display: flex;
   align-items: center;
