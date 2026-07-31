@@ -1,0 +1,238 @@
+:root {
+  --bg: #0d0f12;
+  --panel: #171a1f;
+  --text: #e8eaed;
+  --muted: #8b929c;
+  --good: #3ddc84;
+  --warn: #f5a623;
+  --bad: #ff5c5c;
+  --line: #262b33;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  /* Dark UI for night driving; sunlight legibility comes from size and contrast. */
+  -webkit-font-smoothing: antialiased;
+}
+
+main {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 20px 18px calc(20px + env(safe-area-inset-bottom));
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.health {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  font-size: 15px;
+}
+
+.dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  flex: none;
+}
+.dot.good { background: var(--good); }
+.dot.warn { background: var(--warn); }
+.dot.bad  { background: var(--bad); }
+
+.health-label { color: var(--muted); }
+.health-value { margin-left: auto; font-variant-numeric: tabular-nums; }
+
+.stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.stat {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 18px 16px;
+}
+
+.stat-label {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.stat-value {
+  margin-top: 6px;
+  font-size: 34px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.stat-value .unit {
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--muted);
+  margin-left: 4px;
+}
+
+.idle {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 28px 18px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 15px;
+}
+
+/* Primary control sits at the bottom, reachable one-handed. */
+.spacer { flex: 1; }
+
+button.action {
+  width: 100%;
+  min-height: 88px;
+  border: none;
+  border-radius: 18px;
+  font-size: 22px;
+  font-weight: 600;
+  color: #08090b;
+  background: var(--good);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+button.action.stop { background: var(--bad); color: #fff; }
+button.action:disabled { opacity: 0.5; }
+
+.error {
+  color: var(--bad);
+  font-size: 14px;
+  text-align: center;
+  min-height: 18px;
+}
+
+form.login {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 22dvh;
+}
+
+form.login input {
+  width: 100%;
+  padding: 18px 16px;
+  font-size: 17px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+}
+
+.nav {
+  display: flex;
+  gap: 6px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 5px;
+}
+
+.nav a {
+  flex: 1;
+  text-align: center;
+  padding: 11px 8px;
+  border-radius: 10px;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 15px;
+  font-weight: 500;
+}
+.nav a.active { background: var(--line); color: var(--text); }
+
+.crumb { font-size: 15px; }
+.crumb a { color: var(--muted); text-decoration: none; }
+
+.title { margin: 0; font-size: 25px; font-weight: 600; }
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  text-decoration: none;
+  color: inherit;
+}
+
+.row-main { min-width: 0; }
+.row-title { font-size: 17px; font-weight: 600; }
+
+.row-sub {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 3px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.badge {
+  color: var(--good);
+  border: 1px solid var(--good);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.row-stat { margin-left: auto; text-align: right; }
+.row-miles { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.map {
+  width: 100%;
+  height: 46dvh;
+  min-height: 260px;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.note {
+  font-size: 13px;
+  color: var(--muted);
+  text-align: center;
+  padding: 0 8px;
+}
+
+.map-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+/* MapLibre's default controls are light-themed; tone them down. */
+.maplibregl-ctrl-attrib {
+  background: rgba(0, 0, 0, 0.5) !important;
+  color: var(--muted);
+}
+.maplibregl-ctrl-attrib a { color: var(--muted); }
