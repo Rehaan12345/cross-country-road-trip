@@ -4,19 +4,21 @@ import { useCallback, useEffect, useState } from "react";
 import dynamicImport from "next/dynamic";
 import Nav from "@/components/Nav";
 import { fetchJson } from "@/lib/api";
-import { miles } from "@/lib/format";
+import { miles, stopwatch } from "@/lib/format";
 
 // MapLibre is large and touches window on import — keep it off the server and
 // out of the shared bundle.
 const RouteMap = dynamicImport(() => import("@/components/RouteMap"), {
   ssr: false,
-  loading: () => <div className="map map-loading">Loading map…</div>,
+  loading: () => <div className="map map-compact map-loading">Loading map…</div>,
 });
 
 type Status = {
-  trip: { id: string; started_at: string } | null;
-  stats: { distance_m: number; moving_s: number; point_count: number } | null;
+  trip: { id: string; label: string | null; started_at: string } | null;
+  stats: { distance_m: number; moving_s: number; paused_s: number } | null;
+  pausedAt: string | null;
   lastPingAt: string | null;
+  serverNow: string | null;
 };
 
 type Journey = {
@@ -27,19 +29,15 @@ type Journey = {
 
 const POLL_MS = 10_000;
 
-function fmtDuration(seconds: number) {
-  const s = Math.max(0, Math.floor(seconds));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  return h > 0 ? `${h}:${String(m).padStart(2, "0")}` : `${m}`;
-}
-
 // The recorder-health line. This is the most important element on the screen:
 // it's how a dead recorder gets noticed while there's still road left to redrive.
 function health(lastPingAt: string | null, now: number) {
   if (!lastPingAt) return { cls: "bad", text: "no pings yet" };
 
-  const ageS = (now - new Date(lastPingAt).getTime()) / 1000;
+  // Clamp: a ping can never legitimately be in the future, and showing a
+  // negative age just looks broken.
+  const ageS = Math.max(0, (now - new Date(lastPingAt).getTime()) / 1000);
+  if (ageS < 10) return { cls: "good", text: "just now" };
   if (ageS < 120) return { cls: "good", text: `${Math.round(ageS)}s ago` };
   if (ageS < 600) return { cls: "warn", text: `${Math.round(ageS / 60)}m ago` };
   if (ageS < 86400) return { cls: "bad", text: `${Math.round(ageS / 60)}m ago` };
@@ -53,6 +51,9 @@ export default function Home() {
   const [now, setNow] = useState(() => Date.now());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // How far this device's clock is ahead of the server's. Measured each poll so
+  // the health indicator stays honest even if the phone or laptop clock is off.
+  const [skewMs, setSkewMs] = useState(0);
 
   const refresh = useCallback(async () => {
     try {
@@ -62,6 +63,7 @@ export default function Home() {
       ]);
       setStatus(s);
       setJourney(j);
+      if (s.serverNow) setSkewMs(Date.now() - new Date(s.serverNow).getTime());
       setLoadError("");
     } catch (e) {
       // Dead zones are expected; keep the last known state but say so.
@@ -79,13 +81,11 @@ export default function Home() {
     };
   }, [refresh]);
 
-  async function toggle() {
+  async function post(path: string) {
     setBusy(true);
     setError("");
 
-    const path = status?.trip ? "/api/trips/stop" : "/api/trips/start";
     const res = await fetch(path, { method: "POST" });
-
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       setError(body.error ?? `Request failed (${res.status})`);
@@ -96,8 +96,17 @@ export default function Home() {
   }
 
   const active = status?.trip ?? null;
-  const h = health(status?.lastPingAt ?? null, now);
-  const elapsedS = active ? (now - new Date(active.started_at).getTime()) / 1000 : 0;
+  const paused = Boolean(status?.pausedAt);
+  const h = health(status?.lastPingAt ?? null, now - skewMs);
+
+  // Elapsed excludes time spent paused. While paused the clock is frozen at the
+  // moment the pause began, so the number on screen matches what gets stored.
+  const pausedS = status?.stats?.paused_s ?? 0;
+  const until = paused ? new Date(status!.pausedAt!).getTime() : now;
+  const elapsedS = active
+    ? (until - new Date(active.started_at).getTime()) / 1000 - pausedS
+    : 0;
+
   const tripMiles = status?.stats ? status.stats.distance_m / 1609.34 : 0;
 
   return (
@@ -122,10 +131,9 @@ export default function Home() {
             </div>
           </div>
           <div className="stat">
-            <div className="stat-label">Elapsed</div>
-            <div className="stat-value">
-              {fmtDuration(elapsedS)}
-              <span className="unit">{elapsedS >= 3600 ? "hr" : "min"}</span>
+            <div className="stat-label">{paused ? "Paused" : "Elapsed"}</div>
+            <div className={`stat-value${paused ? " dim" : ""}`}>
+              {stopwatch(elapsedS)}
             </div>
           </div>
         </div>
@@ -147,13 +155,24 @@ export default function Home() {
 
       <div className="error">{error}</div>
 
-      <button
-        className={`action ${active ? "stop" : ""}`}
-        onClick={toggle}
-        disabled={busy || status === null}
-      >
-        {busy ? "…" : active ? "Stop" : "Start"}
-      </button>
+      <div className="controls">
+        {active && (
+          <button
+            className="action secondary"
+            onClick={() => post("/api/trips/pause")}
+            disabled={busy}
+          >
+            {paused ? "Resume" : "Pause"}
+          </button>
+        )}
+        <button
+          className={`action ${active ? "stop" : ""}`}
+          onClick={() => post(active ? "/api/trips/stop" : "/api/trips/start")}
+          disabled={busy || status === null}
+        >
+          {busy ? "…" : active ? "Stop" : "Start"}
+        </button>
+      </div>
     </main>
   );
 }

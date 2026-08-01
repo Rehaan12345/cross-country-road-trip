@@ -53,6 +53,40 @@ function coordsOf(g: Geometry | null): [number, number][] {
 
 const EMPTY = { type: "FeatureCollection" as const, features: [] };
 
+// Every separate line in the geometry gets a start and an end marker. Derived
+// from the drawn geometry rather than queried separately, so the dots can never
+// disagree with the line they sit on.
+function endpointFeatures(g: Geometry | null) {
+  const lines: [number, number][][] =
+    !g ? []
+      : g.type === "LineString" ? [g.coordinates]
+      : g.type === "MultiLineString" ? g.coordinates
+      : g.type === "GeometryCollection" ? g.geometries.flatMap((x) =>
+          x.type === "LineString" ? [x.coordinates]
+          : x.type === "MultiLineString" ? x.coordinates
+          : [])
+      : [];
+
+  return {
+    type: "FeatureCollection" as const,
+    features: lines.flatMap((line) => {
+      const valid = line.filter(
+        ([lng, lat]) =>
+          Number.isFinite(lng) && Number.isFinite(lat) && !(lng === 0 && lat === 0),
+      );
+      if (valid.length < 2) return [];
+      return [
+        { role: "start", at: valid[0] },
+        { role: "end", at: valid[valid.length - 1] },
+      ].map(({ role, at }) => ({
+        type: "Feature" as const,
+        geometry: { type: "Point" as const, coordinates: at },
+        properties: { role },
+      }));
+    }),
+  };
+}
+
 export default function RouteMap({
   geojson,
   className = "map",
@@ -126,6 +160,25 @@ export default function RouteMap({
         },
       });
 
+      // Start and end markers, above the line.
+      map.addSource("endpoints", { type: "geojson", data: EMPTY });
+      map.addLayer({
+        id: "endpoints",
+        type: "circle",
+        source: "endpoints",
+        paint: {
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 3, 6, 10, 11],
+          "circle-color": [
+            "match",
+            ["get", "role"],
+            "start", "#3dff9a",
+            "#ff5c5c",
+          ],
+          "circle-stroke-width": 2.5,
+          "circle-stroke-color": "#00120a",
+        },
+      });
+
       setReady(true);
     });
 
@@ -148,17 +201,20 @@ export default function RouteMap({
     if (!map || !ready) return;
 
     const source = map.getSource("route") as GeoJSONSource | undefined;
-    if (!source) return;
+    const marks = map.getSource("endpoints") as GeoJSONSource | undefined;
+    if (!source || !marks) return;
 
     const coords = coordsOf(geojson);
 
     if (!geojson || coords.length === 0) {
       source.setData(EMPTY);
+      marks.setData(EMPTY);
       map.fitBounds(US_BOUNDS, { padding: 20, duration: 0 });
       return;
     }
 
     source.setData({ type: "Feature", geometry: geojson, properties: {} });
+    marks.setData(endpointFeatures(geojson));
 
     const bounds = coords.reduce(
       (b, c) => b.extend(c),

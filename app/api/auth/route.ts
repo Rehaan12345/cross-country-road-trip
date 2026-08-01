@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 
+// POST-only; without this Next attempts to prerender it at build time and logs
+// a JSON-parse error it then recovers from. Noise, not a failure.
+export const dynamic = "force-dynamic";
+
 export async function POST(req: Request) {
   const { passphrase } = await req.json();
 
