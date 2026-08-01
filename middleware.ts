@@ -4,7 +4,14 @@ import { NextResponse, type NextRequest } from "next/server";
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  if (pathname === "/login" || pathname === "/api/auth") {
+  // /maptest.html and /ml are a temporary diagnostic; delete both once the map
+  // is working, along with public/maptest.html and public/ml.
+  if (
+    pathname === "/login" ||
+    pathname === "/api/auth" ||
+    pathname === "/maptest.html" ||
+    pathname.startsWith("/ml/")
+  ) {
     return NextResponse.next();
   }
 

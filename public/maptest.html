@@ -1,0 +1,86 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Map isolation test</title>
+<link rel="stylesheet" href="/ml/maplibre-gl.css">
+<style>
+  body { margin: 0; background: #0d0f12; color: #e8eaed;
+         font: 13px -apple-system, system-ui, sans-serif; }
+  #map { width: 100%; height: 55vh; border-bottom: 2px solid #3ddc84; }
+  #log { padding: 10px; white-space: pre-wrap; line-height: 1.5; }
+  .ok { color: #3ddc84; }
+  .bad { color: #ff5c5c; }
+</style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="log"></div>
+
+<script type="module">
+const logEl = document.getElementById("log");
+const say = (msg, cls = "") => {
+  logEl.innerHTML += `<div class="${cls}">${msg}</div>`;
+};
+
+// 1. Does this browser have WebGL at all? MapLibre needs it; a blank black
+//    canvas is exactly what a missing context looks like.
+const probe = document.createElement("canvas");
+const gl2 = probe.getContext("webgl2");
+const gl1 = probe.getContext("webgl");
+say(`WebGL2: ${gl2 ? "yes" : "NO"} | WebGL1: ${gl1 ? "yes" : "NO"}`,
+    gl2 || gl1 ? "ok" : "bad");
+
+// 2. Can this browser reach CARTO? Same-origin rules don't apply to tiles,
+//    but an extension, VPN, or DNS filter can block them silently.
+const STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
+try {
+  const r = await fetch(STYLE);
+  say(`style.json fetch: HTTP ${r.status}`, r.ok ? "ok" : "bad");
+} catch (e) {
+  say(`style.json fetch FAILED: ${e.message}`, "bad");
+}
+
+const el = document.getElementById("map");
+say(`container: ${el.clientWidth} x ${el.clientHeight}`,
+    el.clientWidth && el.clientHeight ? "ok" : "bad");
+
+// 3. Now the map itself.
+let MapLibreMap;
+try {
+  ({ MapLibreMap } = await import("/ml/maplibre-gl.mjs"));
+  say("maplibre module loaded", "ok");
+} catch (e) {
+  say(`maplibre module FAILED to load: ${e.message}`, "bad");
+  throw e;
+}
+
+let tiles = 0;
+try {
+  const map = new MapLibreMap({
+    container: el,
+    style: STYLE,
+    center: [-98.5, 39.8],
+    zoom: 3,
+  });
+
+  map.on("error", (e) => say(`MAP ERROR: ${e.error?.message ?? e}`, "bad"));
+  map.on("style.load", () => say("style loaded", "ok"));
+  map.on("data", (e) => {
+    if (e.dataType === "source" && e.tile) tiles++;
+  });
+  map.on("load", () => {
+    const c = map.getCanvas();
+    say(`map load; canvas ${c.width} x ${c.height}`,
+        c.width && c.height ? "ok" : "bad");
+  });
+  map.on("idle", () => {
+    say(`idle — tiles rendered: ${tiles}`, tiles > 0 ? "ok" : "bad");
+  });
+} catch (e) {
+  say(`map construction threw: ${e.message}`, "bad");
+}
+</script>
+</body>
+</html>

@@ -1,9 +1,18 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 // maplibre-gl v6 has no default export.
-import { MapLibreMap, LngLatBounds } from "maplibre-gl";
+import { MapLibreMap, LngLatBounds, setWorkerUrl, type GeoJSONSource } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+
+// MapLibre parses vector tiles in a Web Worker. It locates that worker from
+// `import.meta.url`, which every bundler rewrites to a `file://` literal — so
+// its own `/^https?:/` guard fails, it falls back to `new Worker("")`, and the
+// worker silently never loads. The style still paints its background layer, so
+// the map looks like a black rectangle instead of throwing. Point it at the
+// copy served from public/ml/ (which keeps maplibre-gl-shared.mjs beside it,
+// as the worker imports that sibling at runtime).
+setWorkerUrl("/ml/maplibre-gl-worker.mjs");
 
 // Kept in one place so switching tile providers is a one-line change.
 // CARTO's dark basemap needs no API key, which is one less thing to configure.
@@ -21,13 +30,28 @@ type Geometry =
   | { type: "MultiLineString"; coordinates: [number, number][][] }
   | { type: "GeometryCollection"; geometries: Geometry[] };
 
-function coordsOf(g: Geometry | null): [number, number][] {
+function rawCoords(g: Geometry | null): [number, number][] {
   if (!g) return [];
   if (g.type === "LineString") return g.coordinates;
   if (g.type === "MultiLineString") return g.coordinates.flat();
-  if (g.type === "GeometryCollection") return g.geometries.flatMap(coordsOf);
+  if (g.type === "GeometryCollection") return g.geometries.flatMap(rawCoords);
   return [];
 }
+
+// A single junk coordinate — a null-island (0,0) ping, or anything out of range
+// — would stretch fitBounds across the planet and shrink the route to nothing.
+function coordsOf(g: Geometry | null): [number, number][] {
+  return rawCoords(g).filter(
+    ([lng, lat]) =>
+      Number.isFinite(lng) &&
+      Number.isFinite(lat) &&
+      Math.abs(lng) <= 180 &&
+      Math.abs(lat) <= 90 &&
+      !(lng === 0 && lat === 0),
+  );
+}
+
+const EMPTY = { type: "FeatureCollection" as const, features: [] };
 
 export default function RouteMap({
   geojson,
@@ -37,8 +61,17 @@ export default function RouteMap({
   className?: string;
 }) {
   const container = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<MapLibreMap | null>(null);
+  const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // The parent refetches on a timer, so `geojson` arrives as a new object every
+  // poll even when the route is unchanged. Key the data effect on content, not
+  // identity, or the map refits its bounds every ten seconds.
+  const key = useMemo(() => (geojson ? JSON.stringify(geojson) : null), [geojson]);
+
+  // Create the map exactly once. Rebuilding it per data change is what kept it
+  // from ever painting.
   useEffect(() => {
     if (!container.current) return;
 
@@ -47,19 +80,16 @@ export default function RouteMap({
       map = new MapLibreMap({
         container: container.current,
         style: MAP_STYLE,
-        attributionControl: { compact: true },
-        // Open on the US so the map is framed correctly from the first paint,
-        // with no flash of world view before the route bounds are applied.
-        bounds: US_BOUNDS,
-        fitBoundsOptions: { padding: 20 },
+        center: [-98.5, 39.8],
+        zoom: 3,
       });
     } catch (e) {
-      // Most likely no WebGL context available.
       setError(e instanceof Error ? e.message : "Map failed to initialise");
       return;
     }
 
-    // Tile/style/network failures are otherwise silent — the map just stays blank.
+    mapRef.current = map;
+
     map.on("error", (e) => {
       const msg = e.error?.message ?? "Map error";
       console.error("[map]", msg, e);
@@ -67,13 +97,22 @@ export default function RouteMap({
     });
 
     map.on("load", () => {
-      const coords = coordsOf(geojson);
-      // No route yet — leave the US view in place.
-      if (!geojson || coords.length === 0) return;
+      map.resize();
+      map.addSource("route", { type: "geojson", data: EMPTY });
 
-      map.addSource("route", {
-        type: "geojson",
-        data: { type: "Feature", geometry: geojson, properties: {} },
+      // Dark casing under a bright core. On a near-black basemap a single thin
+      // line disappears into the land fill; the casing gives it an edge so the
+      // route reads at any zoom.
+      map.addLayer({
+        id: "route-casing",
+        type: "line",
+        source: "route",
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: {
+          "line-color": "#00120a",
+          "line-opacity": 0.95,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 3, 8, 10, 16],
+        },
       });
 
       map.addLayer({
@@ -81,18 +120,53 @@ export default function RouteMap({
         type: "line",
         source: "route",
         layout: { "line-cap": "round", "line-join": "round" },
-        paint: { "line-color": "#3ddc84", "line-width": 4 },
+        paint: {
+          "line-color": "#3dff9a",
+          "line-width": ["interpolate", ["linear"], ["zoom"], 3, 4, 10, 9],
+        },
       });
 
-      const bounds = coords.reduce(
-        (b, c) => b.extend(c),
-        new LngLatBounds(coords[0], coords[0]),
-      );
-      map.fitBounds(bounds, { padding: 40, duration: 0, maxZoom: 14 });
+      setReady(true);
     });
 
-    return () => map.remove();
-  }, [geojson]);
+    // The container can gain its final height after construction (dynamic
+    // import, dvh units, flex settling).
+    const ro = new ResizeObserver(() => map.resize());
+    ro.observe(container.current);
+
+    return () => {
+      ro.disconnect();
+      map.remove();
+      mapRef.current = null;
+      setReady(false);
+    };
+  }, []);
+
+  // Feed data into the existing map.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+
+    const source = map.getSource("route") as GeoJSONSource | undefined;
+    if (!source) return;
+
+    const coords = coordsOf(geojson);
+
+    if (!geojson || coords.length === 0) {
+      source.setData(EMPTY);
+      map.fitBounds(US_BOUNDS, { padding: 20, duration: 0 });
+      return;
+    }
+
+    source.setData({ type: "Feature", geometry: geojson, properties: {} });
+
+    const bounds = coords.reduce(
+      (b, c) => b.extend(c),
+      new LngLatBounds(coords[0], coords[0]),
+    );
+    map.fitBounds(bounds, { padding: 40, duration: 0, maxZoom: 14 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, ready]);
 
   return (
     <div className={className} ref={container}>

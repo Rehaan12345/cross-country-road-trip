@@ -2,6 +2,9 @@
   "name": "cross-country-drive-26",
   "private": true,
   "scripts": {
+    "sync:maplibre": "cp node_modules/maplibre-gl/dist/maplibre-gl-worker.mjs node_modules/maplibre-gl/dist/maplibre-gl-shared.mjs public/ml/",
+    "predev": "npm run sync:maplibre",
+    "prebuild": "npm run sync:maplibre",
     "dev": "next dev",
     "build": "next build",
     "start": "next start"
