@@ -242,6 +242,40 @@ export function buildItinerary(state: PlanState): ItineraryDay[] {
   return days;
 }
 
+export type DrivenDrive = Extract<ItineraryDay, { kind: "drive" }>;
+
+/**
+ * The drives you have ticked off.
+ *
+ * These are what surface on the Trips tab and the Now map. They are derived on
+ * every read rather than written into the `trips` table, because that table is
+ * what the recorder measured — untick a day and this simply stops returning it,
+ * with nothing to clean up.
+ */
+export const drivenDrives = (state: PlanState): DrivenDrive[] =>
+  buildItinerary(state).filter(
+    (d): d is DrivenDrive => d.kind === "drive" && d.done,
+  );
+
+/**
+ * Marked legs that no recording covers — the ones that stand in for the GPS.
+ *
+ * Marking a day driven is the fallback for a recorder that didn't run, so a
+ * marked leg counts only where there is nothing recorded for that date. Without
+ * this the same drive would be counted twice — 474 recorded miles plus 474
+ * asserted ones — and the journey total, the one number the whole app exists to
+ * produce, would quietly be wrong.
+ *
+ * Matching is by calendar date, which is the coarsest thing both sides agree
+ * on. `recordedDates` is built from trip start times, so a drive that began
+ * late enough in the evening to land on the next UTC date would not suppress
+ * its leg; road-trip days start in the morning, where every US offset agrees.
+ */
+export const uncoveredDrives = (
+  state: PlanState,
+  recordedDates: Set<string>,
+): DrivenDrive[] => drivenDrives(state).filter((d) => !recordedDates.has(d.date));
+
 // ---------------------------------------------------------------------------
 // Edits. All pure: they take a plan and return a new one.
 // ---------------------------------------------------------------------------

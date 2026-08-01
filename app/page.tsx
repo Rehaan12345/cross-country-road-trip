@@ -23,6 +23,9 @@ type Status = {
 
 type Journey = {
   geojson: never;
+  // Days marked driven that the recorder missed. Already counted in the totals
+  // below — carried separately only so the map can draw them differently.
+  plannedGeojson: never | null;
   totalMeters: number;
   tripCount: number;
 };
@@ -141,7 +144,11 @@ export default function Home() {
         <div className="idle">No trip running</div>
       )}
 
-      <RouteMap geojson={journey?.geojson ?? null} className="map map-compact" />
+      <RouteMap
+        geojson={journey?.geojson ?? null}
+        planned={journey?.plannedGeojson ?? null}
+        className="map map-compact"
+      />
 
       <div className="journey-total">
         <span className="stat-label">Journey</span>

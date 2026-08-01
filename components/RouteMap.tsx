@@ -89,9 +89,17 @@ function endpointFeatures(g: Geometry | null) {
 
 export default function RouteMap({
   geojson,
+  planned = null,
   className = "map",
 }: {
   geojson: Geometry | null;
+  /**
+   * Planned legs marked driven on the Route tab. Drawn pale and solid UNDER the
+   * recorded line, never merged into it: one is where the phone says you went,
+   * the other is where you say you went, and at a glance they must not read the
+   * same. Matches the completed-plan colour on the Route tab.
+   */
+  planned?: Geometry | null;
   className?: string;
 }) {
   const container = useRef<HTMLDivElement>(null);
@@ -103,6 +111,7 @@ export default function RouteMap({
   // poll even when the route is unchanged. Key the data effect on content, not
   // identity, or the map refits its bounds every ten seconds.
   const key = useMemo(() => (geojson ? JSON.stringify(geojson) : null), [geojson]);
+  const plannedKey = useMemo(() => (planned ? JSON.stringify(planned) : null), [planned]);
 
   // Create the map exactly once. Rebuilding it per data change is what kept it
   // from ever painting.
@@ -132,6 +141,22 @@ export default function RouteMap({
 
     map.on("load", () => {
       map.resize();
+
+      // Added first so it sits beneath the recorded route: where the GPS
+      // actually went should win wherever the two overlap.
+      map.addSource("planned", { type: "geojson", data: EMPTY });
+      map.addLayer({
+        id: "planned",
+        type: "line",
+        source: "planned",
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: {
+          "line-color": "#d5dae1",
+          "line-opacity": 0.75,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 3, 3, 10, 6],
+        },
+      });
+
       map.addSource("route", { type: "geojson", data: EMPTY });
 
       // Dark casing under a bright core. On a near-black basemap a single thin
@@ -204,25 +229,37 @@ export default function RouteMap({
     const marks = map.getSource("endpoints") as GeoJSONSource | undefined;
     if (!source || !marks) return;
 
+    const plannedSource = map.getSource("planned") as GeoJSONSource | undefined;
+    plannedSource?.setData(
+      planned ? { type: "Feature", geometry: planned, properties: {} } : EMPTY,
+    );
+
     const coords = coordsOf(geojson);
+    // Planned legs frame the map too — otherwise ticking days off before the
+    // recorder has ever run would draw a line the view is nowhere near.
+    const plannedCoords = coordsOf(planned);
+    const all = [...coords, ...plannedCoords];
 
     if (!geojson || coords.length === 0) {
       source.setData(EMPTY);
       marks.setData(EMPTY);
+    } else {
+      source.setData({ type: "Feature", geometry: geojson, properties: {} });
+      marks.setData(endpointFeatures(geojson));
+    }
+
+    if (all.length === 0) {
       map.fitBounds(US_BOUNDS, { padding: 20, duration: 0 });
       return;
     }
 
-    source.setData({ type: "Feature", geometry: geojson, properties: {} });
-    marks.setData(endpointFeatures(geojson));
-
-    const bounds = coords.reduce(
+    const bounds = all.reduce(
       (b, c) => b.extend(c),
-      new LngLatBounds(coords[0], coords[0]),
+      new LngLatBounds(all[0], all[0]),
     );
     map.fitBounds(bounds, { padding: 40, duration: 0, maxZoom: 14 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, ready]);
+  }, [key, plannedKey, ready]);
 
   return (
     <div className={className} ref={container}>

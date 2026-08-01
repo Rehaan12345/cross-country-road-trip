@@ -561,6 +561,16 @@ form.login input {
 }
 .plan-day.done.selected { opacity: 1; }
 
+/* Asserted, not measured. The pale left edge matches the completed-plan line on
+   both maps, so a row and its line read as the same kind of thing. */
+.row.planned { border-left: 3px solid #d5dae1; }
+.row.planned .row-miles { color: var(--muted); }
+
+.badge.plan {
+  color: #d5dae1;
+  border-color: #d5dae1;
+}
+
 /* Side trips hang off the day rather than sitting in the sequence, because
    they don't consume one — indented and amber, matching their map line. */
 .side-list {
