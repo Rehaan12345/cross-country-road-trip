@@ -1,113 +1,130 @@
-// Server-only. Reads and writes the editable plan: a departure date, a number
-// of nights per stop, and notes per leg and per stop. Everything else about the
-// itinerary is derived — see buildItinerary in lib/plan.ts.
+// Server-only. Reads and writes the route.
 //
 // Imports lib/supabase, which holds the service-role key — never import this
 // from a client component.
 
 import { supabase } from "@/lib/supabase";
-import {
-  DEFAULT_PLAN,
-  LEGS,
-  REST_STOPS,
-  nightsAt,
-  type PlanState,
-} from "@/lib/plan";
+import type { PlanEdits, PlanState, RouteStop, SideTrip } from "@/lib/plan";
 
-const clone = (p: PlanState): PlanState => ({
-  departure: p.departure,
-  rests: { ...p.rests },
-  legNotes: { ...p.legNotes },
-  stopNotes: { ...p.stopNotes },
-  doneLegs: p.doneLegs,
-  doneNights: p.doneNights,
-});
+const STOP_COLUMNS =
+  "id, position, name, lng, lat, rest_nights, note, drive_note, drive_miles, drive_minutes, drive_via, drive_estimated, drive_geometry";
 
-/**
- * The stored plan, seeding from the code defaults on first ever read.
- *
- * Seeding lazily rather than in the migration keeps DEFAULT_PLAN as the single
- * definition of the original trip — the same values feed a fresh database and
- * the reset action.
- */
+type StopRow = {
+  id: string;
+  position: number;
+  name: string;
+  lng: number;
+  lat: number;
+  rest_nights: number;
+  note: string;
+  drive_note: string;
+  drive_miles: number | null;
+  drive_minutes: number | null;
+  drive_via: string | null;
+  drive_estimated: boolean;
+  drive_geometry: [number, number][] | null;
+};
+
+type SideTripRow = {
+  id: string;
+  stop_id: string;
+  name: string;
+  lng: number;
+  lat: number;
+  miles: number;
+  minutes: number;
+  geometry: [number, number][];
+};
+
 export async function readPlan(): Promise<PlanState> {
-  const [trip, stops, legs] = await Promise.all([
-    supabase
-      .from("plan_trip")
-      .select("departure_date, done_legs, done_nights")
-      .maybeSingle(),
-    supabase.from("plan_stops").select("stop, rest_nights, note"),
-    supabase.from("plan_legs").select("leg, note"),
+  const [trip, stops, sides] = await Promise.all([
+    supabase.from("plan_trip").select("departure_date, done_stop_id, done_nights").maybeSingle(),
+    supabase.from("route_stops").select(STOP_COLUMNS).order("position"),
+    supabase.from("route_side_trips").select("*"),
   ]);
 
   if (trip.error) throw new Error(trip.error.message);
   if (stops.error) throw new Error(stops.error.message);
-  if (legs.error) throw new Error(legs.error.message);
+  if (sides.error) throw new Error(sides.error.message);
 
-  if (!trip.data) {
-    await writePlan(DEFAULT_PLAN);
-    return clone(DEFAULT_PLAN);
+  const bySide = new Map<string, SideTrip[]>();
+  for (const r of (sides.data ?? []) as SideTripRow[]) {
+    const list = bySide.get(r.stop_id) ?? [];
+    list.push({
+      id: r.id,
+      name: r.name,
+      coord: [r.lng, r.lat],
+      miles: r.miles,
+      minutes: r.minutes,
+      geometry: r.geometry ?? [],
+    });
+    bySide.set(r.stop_id, list);
   }
 
-  const rests: Record<number, number> = {};
-  const stopNotes: Record<number, string> = {};
-  for (const row of stops.data ?? []) {
-    // Zero nights is the absence of a rest, not a rest of length zero. Keeping
-    // it out of the map means two equal plans compare equal. Same for a blank
-    // note — which is kept even when the nights are gone, so re-adding a night
-    // brings the note back with it.
-    if (row.rest_nights > 0) rests[row.stop] = row.rest_nights;
-    if (row.note) stopNotes[row.stop] = row.note;
-  }
+  const rows = (stops.data ?? []) as StopRow[];
+  const list: RouteStop[] = rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    coord: [r.lng, r.lat],
+    restNights: r.rest_nights,
+    note: r.note,
+    driveNote: r.drive_note,
+    drive:
+      r.drive_miles === null || r.drive_minutes === null
+        ? null
+        : {
+            miles: r.drive_miles,
+            minutes: r.drive_minutes,
+            via: r.drive_via,
+            estimated: r.drive_estimated,
+            geometry: r.drive_geometry ?? [],
+          },
+    sideTrips: (bySide.get(r.id) ?? []).sort((a, b) => a.name.localeCompare(b.name)),
+  }));
 
-  const legNotes: Record<number, string> = {};
-  for (const row of legs.data ?? []) {
-    if (row.note) legNotes[row.leg] = row.note;
-  }
+  // The last stop is the end of the road, whatever the database says about it —
+  // a stale drive there would draw a line to nowhere.
+  if (list.length > 0) list[list.length - 1].drive = null;
 
   return {
     // Postgres `date` arrives as `yyyy-mm-dd`; slice defends against a driver
     // that ever decides to append a time.
-    departure: String(trip.data.departure_date).slice(0, 10),
-    rests,
-    legNotes,
-    stopNotes,
-    doneLegs: trip.data.done_legs ?? 0,
-    doneNights: trip.data.done_nights ?? 0,
+    departure: String(trip.data?.departure_date ?? "2026-08-09").slice(0, 10),
+    stops: list,
+    doneStopId: trip.data?.done_stop_id ?? null,
+    doneNights: trip.data?.done_nights ?? 0,
   };
 }
 
-export async function writePlan(state: PlanState): Promise<void> {
-  const trip = await supabase
-    .from("plan_trip")
-    .upsert(
-      {
-        id: true,
-        departure_date: state.departure,
-        done_legs: state.doneLegs,
-        done_nights: state.doneNights,
-      },
-      { onConflict: "id" },
-    );
+/**
+ * Apply the typed-in fields.
+ *
+ * Only stops that already exist are touched, and only their four editable
+ * columns — an id the client invented is ignored rather than inserted, so a
+ * stale tab cannot resurrect a city you deleted.
+ */
+export async function writeEdits(edits: PlanEdits): Promise<void> {
+  const trip = await supabase.from("plan_trip").upsert(
+    {
+      id: true,
+      departure_date: edits.departure,
+      done_stop_id: edits.doneStopId,
+      done_nights: edits.doneNights,
+    },
+    { onConflict: "id" },
+  );
   if (trip.error) throw new Error(trip.error.message);
 
-  // Every restable stop and every leg is written every time, blanks and zeros
-  // included. Writing the full set rather than only the non-empty ones is what
-  // makes *clearing* a note or removing the last rest day actually stick — a
-  // partial upsert would leave the old value behind.
-  const stops = await supabase.from("plan_stops").upsert(
-    REST_STOPS.map((stop) => ({
-      stop,
-      rest_nights: nightsAt(state, stop),
-      note: state.stopNotes[stop] ?? "",
-    })),
-    { onConflict: "stop" },
-  );
-  if (stops.error) throw new Error(stops.error.message);
+  const existing = await supabase.from("route_stops").select("id");
+  if (existing.error) throw new Error(existing.error.message);
+  const known = new Set((existing.data ?? []).map((r) => r.id));
 
-  const legs = await supabase.from("plan_legs").upsert(
-    LEGS.map((l) => ({ leg: l.leg, note: state.legNotes[l.leg] ?? "" })),
-    { onConflict: "leg" },
-  );
-  if (legs.error) throw new Error(legs.error.message);
+  for (const s of edits.stops) {
+    if (!known.has(s.id)) continue;
+    const { error } = await supabase
+      .from("route_stops")
+      .update({ rest_nights: s.restNights, note: s.note, drive_note: s.driveNote })
+      .eq("id", s.id);
+    if (error) throw new Error(error.message);
+  }
 }

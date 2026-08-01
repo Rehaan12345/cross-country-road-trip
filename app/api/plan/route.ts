@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { parsePlanState } from "@/lib/plan";
-import { readPlan, writePlan } from "@/lib/planStore";
+import { parsePlanEdits } from "@/lib/plan";
+import { readPlan, writeEdits } from "@/lib/planStore";
 
 export const dynamic = "force-dynamic";
 
@@ -14,24 +14,16 @@ export async function GET() {
   }
 }
 
-// The whole plan, replaced.
-//
-// It is two small values, and every edit — shifting departure, adding a night,
-// deleting one — is a function from a plan to a plan. Sending the result rather
-// than the intent means one endpoint, one write, and one definition of each
-// edit (in lib/plan.ts, shared by both sides) instead of a second copy here.
-// The server still refuses anything that isn't a well-formed plan.
+// The typed-in fields, replaced. Adding or removing a city goes through
+// /api/plan/stops instead, because those need the network and must not be
+// something a stale tab can replay.
 export async function PUT(req: Request) {
-  const body = await req.json().catch(() => null);
-  const plan = parsePlanState(body);
-
-  if (!plan) {
-    return NextResponse.json({ error: "invalid plan" }, { status: 400 });
-  }
+  const edits = parsePlanEdits(await req.json().catch(() => null));
+  if (!edits) return NextResponse.json({ error: "invalid plan" }, { status: 400 });
 
   try {
-    await writePlan(plan);
-    return NextResponse.json({ plan });
+    await writeEdits(edits);
+    return NextResponse.json({ plan: await readPlan() });
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
     console.error("[api/plan] write failed", detail);

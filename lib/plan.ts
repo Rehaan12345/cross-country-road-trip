@@ -1,81 +1,78 @@
-// The planned route: Boston -> Los Angeles.
+// The planned route: Boston -> Los Angeles, and whatever you turn it into.
 //
 // THE MODEL
 //
-// The route is a fixed sequence of nine stops joined by eight driving legs.
-// That is the part that doesn't move: changing it would mean a different trip
-// and different road geometry. What moves is *when you leave* and *how many
-// nights you spend at each stop*.
+// A route is an ordered list of stops. Each stop carries the drive to the NEXT
+// one, so a leg has no identity of its own to keep in sync — insert a city and
+// only its two neighbours' drives change. The final stop carries no drive.
 //
-// So the entire editable plan is two things:
+// Everything a day is made of is derived by buildItinerary(): the calendar
+// dates, the day numbers, the length of the trip, and which days are behind
+// you. The only stored things are the departure date, the stops, how many
+// nights you spend at each, and how far along you are.
 //
-//     departure date  +  nights[stop]
+// WHY IDS AND NOT INDEXES
 //
-// and every calendar date, every day number, and the length of the trip are
-// derived from them by buildItinerary(). Nothing about a rest day is stored
-// except the count of nights at a place — there is no rest-day record to add,
-// delete, or keep in sync.
+// Earlier versions keyed notes to a stop index and counted progress in legs,
+// which was safe only while the route was a hardcoded constant. The moment a
+// city can be inserted, every index after it shifts and all of those keys
+// silently point at a different place. So stops carry uuids that never move,
+// and notes, rest nights, side trips and progress all hang off those.
 //
-// WHY NOT STORE A DATE PER DAY
-//
-// The earlier version did, and it had to hardcode which days were rest days,
-// because a stored date can't say *why* two driving days are three days apart.
-// That model could also represent itineraries that cannot happen: pulling day 5
-// back onto day 4's date put two 500-mile drives on one calendar day, and no
-// validation rule catches that without re-deriving the very structure this
-// model makes explicit. Here, a gap between drives simply IS a night somewhere,
-// dates are always ordered by construction, and "add a rest day" is `nights + 1`.
+// The same reasoning that keeps day numbers derived rather than stored, applied
+// one level down.
 
-export type Stop = {
-  name: string;
-  coord: [number, number]; // [lng, lat], geocoded once — never looked up at runtime
-};
-
-export const STOPS: Stop[] = [
-  { name: "Boston, MA", coord: [-71.0589, 42.3601] },
-  { name: "Niagara Falls, NY", coord: [-79.0377, 43.0962] },
-  { name: "Chicago, IL", coord: [-87.6298, 41.8781] },
-  { name: "Kansas City, MO", coord: [-94.5786, 39.0997] },
-  { name: "Aurora, CO", coord: [-104.8319, 39.7294] },
-  { name: "Torrey, UT", coord: [-111.4194, 38.3] },
-  { name: "Grand Canyon, AZ", coord: [-112.1401, 36.0544] },
-  { name: "Las Vegas, NV", coord: [-115.1398, 36.1699] },
-  { name: "Los Angeles, CA", coord: [-118.2437, 34.0522] },
-];
-
-export type Leg = {
-  /** 1-based, and the key into LEG_GEOMETRY. */
-  leg: number;
-  from: number; // index into STOPS
-  to: number;
-  distance_miles: number;
-  drive_time: string;
-  via?: string | null;
+export type Drive = {
+  miles: number;
+  minutes: number;
+  via: string | null;
   /** Drive time is a guess rather than a routed figure. */
-  estimated?: boolean;
+  estimated: boolean;
+  /** [lng, lat] road geometry, fetched once when the stop was added. */
+  geometry: [number, number][];
 };
-
-export const LEGS: Leg[] = [
-  { leg: 1, from: 0, to: 1, distance_miles: 474, drive_time: "6h58m", via: "Buffalo, NY (US-only routing)" },
-  { leg: 2, from: 1, to: 2, distance_miles: 558, drive_time: "8h13m", via: "Cleveland, OH (US-only routing)" },
-  { leg: 3, from: 2, to: 3, distance_miles: 511, drive_time: "7h15m", via: null },
-  { leg: 4, from: 3, to: 4, distance_miles: 596, drive_time: "7h59m", via: null },
-  { leg: 5, from: 4, to: 5, distance_miles: 460, drive_time: "7h55m", via: "I-70 W through Glenwood Canyon and Eisenhower Tunnel", estimated: true },
-  { leg: 6, from: 5, to: 6, distance_miles: 410, drive_time: "8h15m", via: "Bryce Canyon National Park (Scenic Byway 12)", estimated: true },
-  { leg: 7, from: 6, to: 7, distance_miles: 279, drive_time: "4h11m", via: null },
-  { leg: 8, from: 7, to: 8, distance_miles: 270, drive_time: "4h05m", via: null },
-];
 
 /**
- * Where a rest night can be spent: anywhere you arrive and later leave from.
+ * An out-and-back excursion from a stop.
  *
- * Not Boston — "leave later" is the departure date, not a night off. Not Los
- * Angeles — arriving there is the end of the trip, and a night after the end is
- * not part of it.
+ * It adds mileage and time but not a day, and it never touches the chain —
+ * that is the whole difference between a side trip and inserting a city.
  */
-export const canRestAt = (stop: number) => stop >= 1 && stop <= STOPS.length - 2;
+export type SideTrip = {
+  id: string;
+  name: string;
+  coord: [number, number];
+  miles: number;
+  minutes: number;
+  geometry: [number, number][];
+};
 
-export const REST_STOPS = STOPS.map((_, i) => i).filter(canRestAt);
+export type RouteStop = {
+  id: string;
+  name: string;
+  coord: [number, number]; // [lng, lat]
+  restNights: number;
+  /** About the place. */
+  note: string;
+  /** About the drive out of here. Meaningless on the last stop. */
+  driveNote: string;
+  /** The drive to the next stop. Null on the last stop only. */
+  drive: Drive | null;
+  sideTrips: SideTrip[];
+};
+
+export type PlanState = {
+  /** `yyyy-mm-dd`: the day you pull out of the first stop. */
+  departure: string;
+  stops: RouteStop[];
+  /**
+   * The stop you have reached, or null if you haven't left yet, plus the nights
+   * completed there. A position rather than a set of ticked days, because
+   * progress on a road trip is monotonic: leg 5 starts where leg 4 ended.
+   */
+  doneStopId: string | null;
+  doneNights: number;
+};
 
 /** Guards against a typo turning into a thousand-night trip. */
 export const MAX_NIGHTS = 30;
@@ -83,59 +80,40 @@ export const MAX_NIGHTS = 30;
 /** Long enough for a confirmation number and what to do when you get there. */
 export const MAX_NOTE = 500;
 
-export type PlanState = {
-  /** `yyyy-mm-dd`: the day you pull out of Boston. */
-  departure: string;
-  /** Nights spent at each stop, keyed by index into STOPS. Absent means zero. */
-  rests: Record<number, number>;
-  /**
-   * Notes, keyed by leg number and by stop index — never by day number.
-   *
-   * A day number is derived: insert a rest night early on and day 8 becomes a
-   * different place entirely, so a note filed under "day 8" would silently
-   * reattach itself to the wrong row. Legs and stops are the things that don't
-   * move, so notes hang off those and survive every date and rest-day edit.
-   *
-   * A stop's note covers the whole stay, however many nights it runs to.
-   */
-  legNotes: Record<number, string>;
-  stopNotes: Record<number, string>;
+/**
+ * Where a rest night can be spent: anywhere you arrive and later leave from.
+ *
+ * Not the first stop — "leave later" is the departure date, not a night off.
+ * Not the last — arriving there is the end of the trip.
+ */
+export const canRestAt = (stops: RouteStop[], i: number) =>
+  i >= 1 && i <= stops.length - 2;
 
-  /**
-   * How much of the trip is behind you: legs completed, then nights completed
-   * at the stop those legs left you standing in.
-   *
-   * Progress is stored as a position, not as a set of ticked days, because
-   * progress on a road trip is monotonic — you cannot finish leg 5 before leg 3
-   * when leg 5 starts where leg 4 ended. A set of booleans could hold
-   * "5 done, 3 not", which is not a thing that can happen; a position cannot.
-   *
-   * Counted in legs and nights rather than days for the usual reason: day
-   * numbers are derived, so "6 days done" would quietly mean something else the
-   * moment a rest night is added ahead of you.
-   */
-  doneLegs: number;
-  doneNights: number;
-};
+/** The endpoints anchor the trip; everything between them can be removed. */
+export const canRemoveStop = (stops: RouteStop[], i: number) =>
+  i >= 1 && i <= stops.length - 2;
 
-// The plan as it arrived: one night in Chicago, one at the Grand Canyon,
-// nothing driven yet. These are only defaults — the whole point of this file is
-// that they aren't special.
-export const DEFAULT_PLAN: PlanState = {
-  departure: "2026-08-09",
-  rests: { 2: 1, 6: 1 },
-  legNotes: {},
-  stopNotes: {},
-  doneLegs: 0,
-  doneNights: 0,
-};
+export const indexOfStop = (stops: RouteStop[], id: string | null) =>
+  id === null ? -1 : stops.findIndex((s) => s.id === id);
 
-export const TOTAL_MILES = LEGS.reduce((s, l) => s + l.distance_miles, 0);
+export const driveMiles = (stops: RouteStop[]) =>
+  stops.reduce((sum, s) => sum + (s.drive?.miles ?? 0), 0);
 
-export const TOTAL_DRIVE_MINUTES = LEGS.reduce((s, l) => {
-  const m = /^(\d+)h(\d+)m$/.exec(l.drive_time);
-  return s + (m ? Number(m[1]) * 60 + Number(m[2]) : 0);
-}, 0);
+export const sideTripMiles = (stops: RouteStop[]) =>
+  stops.reduce((sum, s) => sum + s.sideTrips.reduce((n, t) => n + t.miles, 0), 0);
+
+export const totalMinutes = (stops: RouteStop[]) =>
+  stops.reduce(
+    (sum, s) =>
+      sum + (s.drive?.minutes ?? 0) + s.sideTrips.reduce((n, t) => n + t.minutes, 0),
+    0,
+  );
+
+/** "6h58m", the format the original plan was written in. */
+export function driveTime(minutes: number) {
+  const m = Math.max(0, Math.round(minutes));
+  return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}m`;
+}
 
 // ---------------------------------------------------------------------------
 // Date arithmetic
@@ -172,48 +150,40 @@ export function isValidPlanDate(value: unknown): value is string {
   return year >= 2020 && year <= 2100;
 }
 
-export const nightsAt = (state: PlanState, stop: number) =>
-  Math.min(MAX_NIGHTS, Math.max(0, Math.trunc(state.rests[stop] ?? 0)));
-
 // ---------------------------------------------------------------------------
 // Derivation
 // ---------------------------------------------------------------------------
 
 export type ItineraryDay =
-  | { day: number; date: string; note: string; done: boolean; kind: "drive"; leg: Leg }
   | {
       day: number;
       date: string;
-      /** The stay's note, repeated on each of its nights. */
       note: string;
       done: boolean;
+      /** Excursions from the stop this day first puts you at. */
+      sideTrips: SideTrip[];
+      kind: "drive";
+      from: RouteStop;
+      to: RouteStop;
+      drive: Drive;
+    }
+  | {
+      day: number;
+      date: string;
+      note: string;
+      done: boolean;
+      sideTrips: SideTrip[];
       kind: "rest";
-      stop: number;
+      stop: RouteStop;
       /** "night 2 of 3" — so consecutive nights at one place read as a stay. */
       nth: number;
       of: number;
     };
 
-/** The stop you are standing in after completing `legs` drives. */
-export const stopAfter = (legs: number) =>
-  legs <= 0 ? 0 : LEGS[Math.min(legs, LEGS.length) - 1].to;
-
-/**
- * Pull the progress position back into range.
- *
- * Deleting rest nights can strand `doneNights` past the end of a stay that no
- * longer exists, so every edit that touches the nights runs through here.
- */
-function clampProgress(state: PlanState): PlanState {
-  const doneLegs = Math.min(LEGS.length, Math.max(0, Math.trunc(state.doneLegs)));
-  const stop = stopAfter(doneLegs);
-  const ceiling = canRestAt(stop) ? nightsAt(state, stop) : 0;
-  const doneNights = Math.min(ceiling, Math.max(0, Math.trunc(state.doneNights)));
-
-  return doneLegs === state.doneLegs && doneNights === state.doneNights
-    ? state
-    : { ...state, doneLegs, doneNights };
-}
+const nightsAtIndex = (stops: RouteStop[], i: number) =>
+  canRestAt(stops, i)
+    ? Math.min(MAX_NIGHTS, Math.max(0, Math.trunc(stops[i].restNights)))
+    : 0;
 
 /**
  * Expand the plan into the day-by-day itinerary.
@@ -224,34 +194,45 @@ function clampProgress(state: PlanState): PlanState {
  * function can produce, which is why nothing downstream validates one.
  */
 export function buildItinerary(state: PlanState): ItineraryDay[] {
+  const { stops } = state;
   const days: ItineraryDay[] = [];
+  if (stops.length < 2) return days;
+
+  const donePos = indexOfStop(stops, state.doneStopId);
   let epoch = toEpochDay(state.departure);
   let day = 1;
 
-  for (const leg of LEGS) {
+  for (let i = 0; i < stops.length - 1; i++) {
+    const from = stops[i];
+    const to = stops[i + 1];
+    if (!from.drive) continue;
+
     days.push({
       day: day++,
       date: fromEpochDay(epoch++),
-      note: state.legNotes[leg.leg] ?? "",
-      done: leg.leg <= state.doneLegs,
+      note: from.driveNote,
+      done: i + 1 <= donePos,
+      // A stop's excursions are listed on the first day you are there. The very
+      // first drive also carries the origin's, which has no arrival day.
+      sideTrips: i === 0 ? [...from.sideTrips, ...to.sideTrips] : to.sideTrips,
       kind: "drive",
-      leg,
+      from,
+      to,
+      drive: from.drive,
     });
 
-    if (!canRestAt(leg.to)) continue;
-    const of = nightsAt(state, leg.to);
+    const of = nightsAtIndex(stops, i + 1);
     for (let nth = 1; nth <= of; nth++) {
       days.push({
         day: day++,
         date: fromEpochDay(epoch++),
-        note: state.stopNotes[leg.to] ?? "",
+        note: to.note,
         // Nights at a stop you have already driven out of are behind you by
-        // definition; nights at the stop you're sitting in depend on the count.
-        done:
-          leg.leg < state.doneLegs ||
-          (leg.leg === state.doneLegs && nth <= state.doneNights),
+        // definition; nights where you're sitting depend on the count.
+        done: i + 1 < donePos || (i + 1 === donePos && nth <= state.doneNights),
+        sideTrips: [],
         kind: "rest",
-        stop: leg.to,
+        stop: to,
         nth,
         of,
       });
@@ -265,23 +246,62 @@ export function buildItinerary(state: PlanState): ItineraryDay[] {
 // Edits. All pure: they take a plan and return a new one.
 // ---------------------------------------------------------------------------
 
-export function setDeparture(state: PlanState, date: string): PlanState {
-  return { ...state, departure: date };
+function patchStop(state: PlanState, id: string, patch: Partial<RouteStop>): PlanState {
+  return { ...state, stops: state.stops.map((s) => (s.id === id ? { ...s, ...patch } : s)) };
 }
 
-export function setNights(state: PlanState, stop: number, nights: number): PlanState {
-  if (!canRestAt(stop)) return state;
+/**
+ * Pull the progress position back into range.
+ *
+ * Deleting rest nights — or the stop you were standing in — can strand
+ * `doneNights` past the end of a stay that no longer exists, so every edit that
+ * touches the nights or the chain runs through here.
+ */
+function clampProgress(state: PlanState): PlanState {
+  const pos = indexOfStop(state.stops, state.doneStopId);
+  if (pos < 0) {
+    return state.doneStopId === null && state.doneNights === 0
+      ? state
+      : { ...state, doneStopId: null, doneNights: 0 };
+  }
 
-  const n = Math.min(MAX_NIGHTS, Math.max(0, Math.trunc(nights)));
-  const rests = { ...state.rests };
-
-  // Drop the key rather than storing a zero, so a plan with no rest days is
-  // literally `{}` and two equal plans compare equal.
-  if (n === 0) delete rests[stop];
-  else rests[stop] = n;
-
-  return clampProgress({ ...state, rests });
+  const ceiling = nightsAtIndex(state.stops, pos);
+  const doneNights = Math.min(ceiling, Math.max(0, Math.trunc(state.doneNights)));
+  return doneNights === state.doneNights ? state : { ...state, doneNights };
 }
+
+export const setDeparture = (state: PlanState, date: string): PlanState => ({
+  ...state,
+  departure: date,
+});
+
+export function setNights(state: PlanState, id: string, nights: number): PlanState {
+  const i = indexOfStop(state.stops, id);
+  if (i < 0 || !canRestAt(state.stops, i)) return state;
+
+  const restNights = Math.min(MAX_NIGHTS, Math.max(0, Math.trunc(nights)));
+  return clampProgress(patchStop(state, id, { restNights }));
+}
+
+// Removing a night deliberately leaves the stop's note behind: a mis-tap must
+// not cost you a hotel confirmation, and re-adding a night brings it back.
+export const addRest = (state: PlanState, id: string) => {
+  const s = state.stops.find((x) => x.id === id);
+  return s ? setNights(state, id, s.restNights + 1) : state;
+};
+
+export const removeRest = (state: PlanState, id: string) => {
+  const s = state.stops.find((x) => x.id === id);
+  return s ? setNights(state, id, s.restNights - 1) : state;
+};
+
+const trimNote = (text: string) => text.trim().slice(0, MAX_NOTE);
+
+export const setStopNote = (state: PlanState, id: string, text: string) =>
+  patchStop(state, id, { note: trimNote(text) });
+
+export const setDriveNote = (state: PlanState, id: string, text: string) =>
+  patchStop(state, id, { driveNote: trimNote(text) });
 
 /**
  * Mark a day finished, or unfinish it.
@@ -293,168 +313,141 @@ export function setNights(state: PlanState, stop: number, nights: number): PlanS
  * not at the start of them.
  */
 export function toggleDone(state: PlanState, entry: ItineraryDay): PlanState {
+  const { stops } = state;
+
   if (entry.kind === "drive") {
-    const leg = entry.leg.leg;
+    const j = indexOfStop(stops, entry.to.id);
+    if (j < 0) return state;
+
+    if (!entry.done) {
+      return clampProgress({ ...state, doneStopId: entry.to.id, doneNights: 0 });
+    }
+    // Stepping back off the first drive is "not started", not "arrived at the
+    // stop you began in" — those render identically but only one is true.
     return clampProgress(
-      entry.done
-        ? { ...state, doneLegs: leg - 1, doneNights: nightsAt(state, stopAfter(leg - 1)) }
-        : { ...state, doneLegs: leg, doneNights: 0 },
+      j - 1 <= 0
+        ? { ...state, doneStopId: null, doneNights: 0 }
+        : {
+            ...state,
+            doneStopId: stops[j - 1].id,
+            doneNights: nightsAtIndex(stops, j - 1),
+          },
     );
   }
 
-  const arriving = LEGS.find((l) => l.to === entry.stop);
-  if (!arriving) return state;
-
   return clampProgress({
     ...state,
-    doneLegs: arriving.leg,
+    doneStopId: entry.stop.id,
     doneNights: entry.done ? entry.nth - 1 : entry.nth,
   });
 }
 
-export const addRest = (state: PlanState, stop: number) =>
-  setNights(state, stop, nightsAt(state, stop) + 1);
-
-// Deliberately leaves the stop's note behind. Removing the last night in
-// Chicago hides the note, it does not shred it — a mis-tap must not cost you a
-// hotel confirmation, and re-adding a night brings it straight back.
-export const removeRest = (state: PlanState, stop: number) =>
-  setNights(state, stop, nightsAt(state, stop) - 1);
-
-function withNote(
-  notes: Record<number, string>,
-  key: number,
-  text: string,
-): Record<number, string> {
-  const next = { ...notes };
-  const trimmed = text.trim().slice(0, MAX_NOTE);
-
-  // An empty note is the absence of a note, not a note of length zero.
-  if (trimmed) next[key] = trimmed;
-  else delete next[key];
-
-  return next;
-}
-
-export const setLegNote = (state: PlanState, leg: number, text: string): PlanState =>
-  LEGS.some((l) => l.leg === leg)
-    ? { ...state, legNotes: withNote(state.legNotes, leg, text) }
-    : state;
-
-export const setStopNote = (state: PlanState, stop: number, text: string): PlanState =>
-  canRestAt(stop)
-    ? { ...state, stopNotes: withNote(state.stopNotes, stop, text) }
-    : state;
-
 /**
  * Move a driving day to a new date.
  *
- * Leg 1 is the departure itself. Any later leg is reached by changing how long
- * you linger at the stop immediately before it — which is the only thing that
- * could actually delay it. Pulling a drive earlier than the day after the
- * previous one would mean two long drives on one date, so it is refused rather
- * than silently clamped: the itinerary you're shown is always one you could
- * physically do.
+ * The first drive is the departure itself. Any later one is reached by changing
+ * how long you linger at the stop immediately before it — which is the only
+ * thing that could actually delay it. Pulling a drive earlier than the day
+ * after the previous one would mean two long drives on one date, so it is
+ * refused rather than silently clamped.
  */
 export function setDriveDate(
   state: PlanState,
-  leg: number,
+  fromStopId: string,
   date: string,
 ): { ok: true; state: PlanState } | { ok: false; error: string } {
   if (!isValidPlanDate(date)) return { ok: false, error: "Not a real date" };
 
-  const target = LEGS.find((l) => l.leg === leg);
-  if (!target) return { ok: false, error: "Unknown leg" };
-
-  if (leg === LEGS[0].leg) return { ok: true, state: setDeparture(state, date) };
+  const i = indexOfStop(state.stops, fromStopId);
+  if (i < 0) return { ok: false, error: "Unknown stop" };
+  if (i === 0) return { ok: true, state: setDeparture(state, date) };
 
   const current = buildItinerary(state).find(
-    (d) => d.kind === "drive" && d.leg.leg === leg,
+    (d) => d.kind === "drive" && d.from.id === fromStopId,
   );
-  if (!current) return { ok: false, error: "Unknown leg" };
+  if (!current) return { ok: false, error: "Unknown stop" };
 
   const delta = toEpochDay(date) - toEpochDay(current.date);
   if (delta === 0) return { ok: true, state };
 
-  const stop = target.from; // where you'd be waiting
-  const next = nightsAt(state, stop) + delta;
+  const waiting = state.stops[i]; // where you'd be waiting
+  const next = waiting.restNights + delta;
 
   if (next < 0) {
-    return {
-      ok: false,
-      error: `That would leave ${STOPS[stop].name} before arriving`,
-    };
+    return { ok: false, error: `That would leave ${waiting.name} before arriving` };
   }
   if (next > MAX_NIGHTS) {
     return { ok: false, error: `Over ${MAX_NIGHTS} nights in one place` };
   }
 
-  return { ok: true, state: setNights(state, stop, next) };
+  return { ok: true, state: setNights(state, waiting.id, next) };
 }
 
-// Notes are free text, so they are trimmed and truncated rather than rejected —
-// a long paste should lose its tail, not the whole edit. The key still has to
-// name something real.
-function parseNotes(
-  value: unknown,
-  valid: (key: number) => boolean,
-): Record<number, string> | null {
+// ---------------------------------------------------------------------------
+// The write payload
+//
+// Only the fields you can change by typing. Names, coordinates and geometry are
+// set by the server when a stop is added and are never sent back up, so a
+// client cannot corrupt them — and the PUT stays a few hundred bytes rather
+// than carrying every vertex of the road.
+// ---------------------------------------------------------------------------
+
+export type PlanEdits = {
+  departure: string;
+  doneStopId: string | null;
+  doneNights: number;
+  stops: { id: string; restNights: number; note: string; driveNote: string }[];
+};
+
+export const toEdits = (state: PlanState): PlanEdits => ({
+  departure: state.departure,
+  doneStopId: state.doneStopId,
+  doneNights: state.doneNights,
+  stops: state.stops.map((s) => ({
+    id: s.id,
+    restNights: s.restNights,
+    note: s.note,
+    driveNote: s.driveNote,
+  })),
+});
+
+/** Narrow unknown JSON into an edit payload, or reject it. Used by the API. */
+export function parsePlanEdits(value: unknown): PlanEdits | null {
   if (typeof value !== "object" || value === null) return null;
-
-  const notes: Record<number, string> = {};
-  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
-    const k = Number(key);
-    if (!Number.isInteger(k) || !valid(k)) return null;
-    if (typeof raw !== "string") return null;
-
-    const trimmed = raw.trim().slice(0, MAX_NOTE);
-    if (trimmed) notes[k] = trimmed;
-  }
-  return notes;
-}
-
-/** Narrow unknown JSON into a plan, or reject it. Used by the API on write. */
-export function parsePlanState(value: unknown): PlanState | null {
-  if (typeof value !== "object" || value === null) return null;
-  const v = value as {
-    departure?: unknown;
-    rests?: unknown;
-    legNotes?: unknown;
-    stopNotes?: unknown;
-    doneLegs?: number;
-    doneNights?: number;
-  };
+  const v = value as Record<string, unknown>;
 
   if (!isValidPlanDate(v.departure)) return null;
-  if (typeof v.rests !== "object" || v.rests === null) return null;
+  if (!Array.isArray(v.stops)) return null;
+  if (v.doneStopId !== null && typeof v.doneStopId !== "string") return null;
+  if (!Number.isInteger(v.doneNights)) return null;
 
-  const rests: Record<number, number> = {};
-  for (const [key, raw] of Object.entries(v.rests as Record<string, unknown>)) {
-    const stop = Number(key);
-    if (!Number.isInteger(stop) || !canRestAt(stop)) return null;
-    if (typeof raw !== "number" || !Number.isInteger(raw)) return null;
-    if (raw < 0 || raw > MAX_NIGHTS) return null;
-    if (raw > 0) rests[stop] = raw;
-  }
-
-  const legNotes = parseNotes(v.legNotes ?? {}, (k) => LEGS.some((l) => l.leg === k));
-  const stopNotes = parseNotes(v.stopNotes ?? {}, canRestAt);
-  if (!legNotes || !stopNotes) return null;
-
-  const doneLegs = v.doneLegs ?? 0;
-  const doneNights = v.doneNights ?? 0;
-  if (!Number.isInteger(doneLegs) || !Number.isInteger(doneNights)) return null;
-  if (doneLegs < 0 || doneLegs > LEGS.length) return null;
+  const doneNights = v.doneNights as number;
   if (doneNights < 0 || doneNights > MAX_NIGHTS) return null;
 
-  // Clamped rather than rejected: a position past the end of a stay is stale,
-  // not malicious — it is what a client holds after deleting a rest night.
-  return clampProgress({
+  const stops: PlanEdits["stops"] = [];
+  for (const raw of v.stops) {
+    if (typeof raw !== "object" || raw === null) return null;
+    const s = raw as Record<string, unknown>;
+
+    if (typeof s.id !== "string" || !s.id) return null;
+    if (!Number.isInteger(s.restNights)) return null;
+    if ((s.restNights as number) < 0 || (s.restNights as number) > MAX_NIGHTS) return null;
+    if (typeof s.note !== "string" || typeof s.driveNote !== "string") return null;
+
+    stops.push({
+      id: s.id,
+      restNights: s.restNights as number,
+      // Trimmed and truncated rather than rejected: a long paste should lose
+      // its tail, not the whole edit.
+      note: trimNote(s.note),
+      driveNote: trimNote(s.driveNote),
+    });
+  }
+
+  return {
     departure: v.departure,
-    rests,
-    legNotes,
-    stopNotes,
-    doneLegs: doneLegs as number,
-    doneNights: doneNights as number,
-  });
+    doneStopId: (v.doneStopId as string | null) ?? null,
+    doneNights,
+    stops,
+  };
 }

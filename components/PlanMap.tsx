@@ -9,8 +9,7 @@ import {
   type GeoJSONSource,
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { LEG_GEOMETRY } from "@/lib/planGeometry";
-import { STOPS } from "@/lib/plan";
+import { indexOfStop, type RouteStop } from "@/lib/plan";
 
 // Same worker fix as RouteMap: bundlers rewrite MapLibre's `import.meta.url` to
 // a `file://` literal, its own `/^https?:/` guard then fails, and the tile
@@ -26,8 +25,9 @@ const MAP_STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.j
 // more punch than body text does.
 const C = {
   planLine: "#8b929c",   // --muted
-  planDone: "#d5dae1",   // between --muted and --text: behind you, still not the GPS trace
+  planDone: "#d5dae1",   // between --muted and --text: behind you, not the GPS trace
   planGlow: "#e8eaed",   // --text, for the selected leg
+  side: "#f5a623",       // --warn, same family as a rest stop
   driven: "#3dff9a",     // brighter sibling of --good
   casing: "#00120a",
   origin: "#3ddc84",     // --good
@@ -39,45 +39,31 @@ const C = {
 
 const EMPTY = { type: "FeatureCollection" as const, features: [] };
 
-// One LineString per driving leg. Keeping them separate (rather than one line
-// for the whole trip) is what lets a single leg be highlighted.
-const PLAN_FEATURES = {
-  type: "FeatureCollection" as const,
-  features: Object.entries(LEG_GEOMETRY).map(([leg, coordinates]) => ({
-    type: "Feature" as const,
-    geometry: { type: "LineString" as const, coordinates },
-    properties: { leg: Number(leg) },
-  })),
-};
-
-const PLAN_BOUNDS = PLAN_FEATURES.features
-  .flatMap((f) => f.geometry.coordinates)
-  .reduce(
-    (b, c) => b.extend(c as [number, number]),
-    new LngLatBounds(STOPS[0].coord, STOPS[0].coord),
-  );
+// Continental US: the frame before any geometry has loaded.
+const US_BOUNDS: [[number, number], [number, number]] = [
+  [-125, 24],
+  [-66.9, 49.5],
+];
 
 export default function PlanMap({
   journey,
   showPlan,
   showDriven,
-  rests,
-  doneLegs,
-  selectedLeg,
-  selectedStop,
+  stops,
+  doneStopId,
+  selectedDriveFromId,
+  selectedStopId,
   onSelectStop,
   className = "map",
 }: {
   journey: object | null;
   showPlan: boolean;
   showDriven: boolean;
-  /** Nights per stop. Drives which pins read as a stay — nothing is hardcoded. */
-  rests: Record<number, number>;
-  /** Legs completed. Everything up to here draws solid instead of dashed. */
-  doneLegs: number;
-  selectedLeg: number | null;
-  selectedStop: number | null;
-  onSelectStop: (stop: number) => void;
+  stops: RouteStop[];
+  doneStopId: string | null;
+  selectedDriveFromId: string | null;
+  selectedStopId: string | null;
+  onSelectStop: (id: string) => void;
   className?: string;
 }) {
   const container = useRef<HTMLDivElement>(null);
@@ -90,33 +76,71 @@ export default function PlanMap({
   const selectRef = useRef(onSelectStop);
   selectRef.current = onSelectStop;
 
-  // Which pins are stays is derived from the plan, so the markers change the
-  // moment a rest night is added or removed.
-  const stopFeatures = useMemo(
-    () => ({
+  // Everything drawn is derived from the route, so adding a city or a side trip
+  // redraws without the map knowing anything about either operation.
+  const { planFeatures, sideFeatures, stopFeatures, bounds } = useMemo(() => {
+    const donePos = indexOfStop(stops, doneStopId);
+
+    const planFeatures = {
       type: "FeatureCollection" as const,
-      features: STOPS.map((s, i) => {
-        const nights = rests[i] ?? 0;
-        return {
-          type: "Feature" as const,
-          geometry: { type: "Point" as const, coordinates: s.coord },
-          properties: {
-            stop: i,
-            nights,
-            // "Chicago, IL · 2 nights" — the stay is part of the place's name
-            // on the map, so the itinerary isn't the only way to see it.
-            label: nights > 0 ? `${s.name} · ${nights}n` : s.name,
-            kind:
-              i === 0 ? "origin"
-              : i === STOPS.length - 1 ? "final"
-              : nights > 0 ? "rest"
-              : "stop",
-          },
-        };
-      }),
-    }),
-    [rests],
-  );
+      features: stops.flatMap((s, i) =>
+        s.drive && s.drive.geometry.length > 1
+          ? [
+              {
+                type: "Feature" as const,
+                geometry: { type: "LineString" as const, coordinates: s.drive.geometry },
+                properties: { fromId: s.id, done: i + 1 <= donePos },
+              },
+            ]
+          : [],
+      ),
+    };
+
+    const sideFeatures = {
+      type: "FeatureCollection" as const,
+      features: stops.flatMap((s) =>
+        s.sideTrips
+          .filter((t) => t.geometry.length > 1)
+          .map((t) => ({
+            type: "Feature" as const,
+            geometry: { type: "LineString" as const, coordinates: t.geometry },
+            properties: { id: t.id, stopId: s.id },
+          })),
+      ),
+    };
+
+    const stopFeatures = {
+      type: "FeatureCollection" as const,
+      features: stops.map((s, i) => ({
+        type: "Feature" as const,
+        geometry: { type: "Point" as const, coordinates: s.coord },
+        properties: {
+          id: s.id,
+          nights: s.restNights,
+          // "Chicago, IL · 2n" — the stay is part of the place's name on the
+          // map, so the itinerary isn't the only way to see it.
+          label: s.restNights > 0 ? `${s.name} · ${s.restNights}n` : s.name,
+          kind:
+            i === 0 ? "origin"
+            : i === stops.length - 1 ? "final"
+            : s.restNights > 0 ? "rest"
+            : "stop",
+        },
+      })),
+    };
+
+    const all = [
+      ...planFeatures.features.flatMap((f) => f.geometry.coordinates),
+      ...sideFeatures.features.flatMap((f) => f.geometry.coordinates),
+      ...stops.map((s) => s.coord),
+    ] as [number, number][];
+
+    const bounds = all.length
+      ? all.reduce((b, c) => b.extend(c), new LngLatBounds(all[0], all[0]))
+      : new LngLatBounds(US_BOUNDS[0], US_BOUNDS[1]);
+
+    return { planFeatures, sideFeatures, stopFeatures, bounds };
+  }, [stops, doneStopId]);
 
   // The page polls, so `journey` is a fresh object every few seconds even when
   // the route hasn't changed. Key the data effect on content, not identity.
@@ -133,7 +157,7 @@ export default function PlanMap({
       map = new MapLibreMap({
         container: container.current,
         style: MAP_STYLE,
-        bounds: PLAN_BOUNDS,
+        bounds: US_BOUNDS,
         fitBoundsOptions: { padding: 44 },
       });
     } catch (e) {
@@ -152,13 +176,11 @@ export default function PlanMap({
     map.on("load", () => {
       map.resize();
 
-      map.addSource("plan", { type: "geojson", data: PLAN_FEATURES });
+      map.addSource("plan", { type: "geojson", data: EMPTY });
+      map.addSource("side", { type: "geojson", data: EMPTY });
       map.addSource("journey", { type: "geojson", data: EMPTY });
       map.addSource("stops", { type: "geojson", data: EMPTY });
 
-      // Dashed and grey: this is the intention, not the record. The solid green
-      // line laid over it is what actually happened, and the two must never be
-      // mistaken for each other at a glance.
       map.addLayer({
         id: "plan-casing",
         type: "line",
@@ -179,7 +201,7 @@ export default function PlanMap({
         id: "plan",
         type: "line",
         source: "plan",
-        filter: [">", ["get", "leg"], 0],
+        filter: ["==", ["get", "done"], false],
         layout: { "line-cap": "butt", "line-join": "round" },
         paint: {
           "line-color": C.planLine,
@@ -192,7 +214,7 @@ export default function PlanMap({
         id: "plan-done",
         type: "line",
         source: "plan",
-        filter: ["<=", ["get", "leg"], 0],
+        filter: ["==", ["get", "done"], true],
         layout: { "line-cap": "round", "line-join": "round" },
         paint: {
           "line-color": C.planDone,
@@ -200,14 +222,27 @@ export default function PlanMap({
         },
       });
 
-      // The selected leg, drawn brighter on top of the dashed plan. Filtered
-      // rather than restyled so selection costs one setFilter call.
+      // Side trips get their own dotted amber line: they are a detour off the
+      // chain, and drawing them like a leg would imply the route goes that way.
+      map.addLayer({
+        id: "side",
+        type: "line",
+        source: "side",
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: {
+          "line-color": C.side,
+          "line-opacity": 0.9,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 3, 2, 10, 4],
+          "line-dasharray": [0.6, 1.8],
+        },
+      });
+
       map.addLayer({
         id: "plan-selected",
         type: "line",
         source: "plan",
+        filter: ["==", ["get", "fromId"], "__none__"],
         layout: { "line-cap": "round", "line-join": "round" },
-        filter: ["==", ["get", "leg"], -1],
         paint: {
           "line-color": C.planGlow,
           "line-width": ["interpolate", ["linear"], ["zoom"], 3, 4, 10, 8],
@@ -239,8 +274,7 @@ export default function PlanMap({
 
       // A stop with nights booked is the largest pin. On a 4,000-mile line the
       // thing you need to find is where you get a night off. How MANY nights is
-      // on the label already — encoding it in the radius too would be a second,
-      // less legible copy of the same fact.
+      // on the label already.
       map.addLayer({
         id: "stops",
         type: "circle",
@@ -263,13 +297,11 @@ export default function PlanMap({
         },
       });
 
-      // A ring around the selected stop, so tapping a list row is visible on the
-      // map even when the leg itself is off-screen.
       map.addLayer({
         id: "stop-selected",
         type: "circle",
         source: "stops",
-        filter: ["==", ["get", "stop"], -1],
+        filter: ["==", ["get", "id"], "__none__"],
         paint: {
           "circle-radius": ["interpolate", ["linear"], ["zoom"], 3, 12, 10, 22],
           "circle-color": "rgba(0,0,0,0)",
@@ -303,8 +335,8 @@ export default function PlanMap({
       });
 
       map.on("click", "stops", (e) => {
-        const stop = e.features?.[0]?.properties?.stop;
-        if (typeof stop === "number") selectRef.current(stop);
+        const id = e.features?.[0]?.properties?.id;
+        if (typeof id === "string") selectRef.current(id);
       });
       map.on("mouseenter", "stops", () => {
         map.getCanvas().style.cursor = "pointer";
@@ -329,12 +361,28 @@ export default function PlanMap({
     };
   }, []);
 
-  // Stop pins, rebuilt whenever the rest nights change.
+  // Route geometry. Refits only when the shape actually changes, so adding a
+  // city reframes the map but ticking a day does not yank it around.
+  const shapeKey = useMemo(
+    () => stops.map((s) => `${s.id}:${s.drive?.geometry.length ?? 0}:${s.sideTrips.length}`).join("|"),
+    [stops],
+  );
+
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready) return;
+
+    (map.getSource("plan") as GeoJSONSource | undefined)?.setData(planFeatures);
+    (map.getSource("side") as GeoJSONSource | undefined)?.setData(sideFeatures);
     (map.getSource("stops") as GeoJSONSource | undefined)?.setData(stopFeatures);
-  }, [stopFeatures, ready]);
+  }, [planFeatures, sideFeatures, stopFeatures, ready]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || !stops.length) return;
+    map.fitBounds(bounds, { padding: 44 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shapeKey, ready]);
 
   // Driven route.
   useEffect(() => {
@@ -359,7 +407,7 @@ export default function PlanMap({
     const set = (id: string, on: boolean) =>
       map.setLayoutProperty(id, "visibility", on ? "visible" : "none");
 
-    for (const id of ["plan-casing", "plan", "plan-done", "plan-selected", "stops", "stop-labels", "stop-selected"]) {
+    for (const id of ["plan-casing", "plan", "plan-done", "plan-selected", "side", "stops", "stop-labels", "stop-selected"]) {
       set(id, showPlan);
     }
     for (const id of ["journey-casing", "journey"]) {
@@ -367,42 +415,33 @@ export default function PlanMap({
     }
   }, [showPlan, showDriven, ready]);
 
-  // Progress: the frontier between solid and dashed.
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !ready) return;
-    map.setFilter("plan", [">", ["get", "leg"], doneLegs]);
-    map.setFilter("plan-done", ["<=", ["get", "leg"], doneLegs]);
-  }, [doneLegs, ready]);
-
-  // Selection: highlight, then move the camera to what was selected. A driving
-  // day frames its whole leg; a rest day has no leg, so it frames the place.
+  // Selection: highlight, then move the camera. A driving day frames its whole
+  // leg; a rest day has no leg, so it frames the place.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready) return;
 
-    map.setFilter("plan-selected", ["==", ["get", "leg"], selectedLeg ?? -1]);
-    map.setFilter("stop-selected", ["==", ["get", "stop"], selectedStop ?? -1]);
+    map.setFilter("plan-selected", ["==", ["get", "fromId"], selectedDriveFromId ?? "__none__"]);
+    map.setFilter("stop-selected", ["==", ["get", "id"], selectedStopId ?? "__none__"]);
 
-    if (selectedLeg !== null) {
-      const line = LEG_GEOMETRY[selectedLeg];
+    if (selectedDriveFromId) {
+      const line = stops.find((s) => s.id === selectedDriveFromId)?.drive?.geometry;
       if (line?.length) {
-        const b = line.reduce(
-          (acc, c) => acc.extend(c),
-          new LngLatBounds(line[0], line[0]),
-        );
+        const b = line.reduce((acc, c) => acc.extend(c), new LngLatBounds(line[0], line[0]));
         map.fitBounds(b, { padding: 50, maxZoom: 9 });
         return;
       }
     }
 
-    if (selectedStop !== null) {
-      map.easeTo({ center: STOPS[selectedStop].coord, zoom: 7 });
+    if (selectedStopId) {
+      const stop = stops.find((s) => s.id === selectedStopId);
+      if (stop) map.easeTo({ center: stop.coord, zoom: 7 });
       return;
     }
 
-    map.fitBounds(PLAN_BOUNDS, { padding: 44 });
-  }, [selectedLeg, selectedStop, ready]);
+    if (stops.length) map.fitBounds(bounds, { padding: 44 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDriveFromId, selectedStopId, ready]);
 
   return (
     // Announced as an image with a text alternative rather than as an
@@ -413,7 +452,7 @@ export default function PlanMap({
       className={className}
       ref={container}
       role="img"
-      aria-label="Map of the planned Boston to Los Angeles route. The itinerary below lists each day in the same order."
+      aria-label="Map of the planned route. The itinerary below lists each day in the same order."
     >
       {error && <div className="map-error">Map error: {error}</div>}
     </div>
