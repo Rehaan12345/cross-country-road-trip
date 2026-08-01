@@ -366,6 +366,233 @@ form.login input {
   font-size: 14px;
 }
 
+/* ---------------------------------------------------------------------------
+   Route tab: the planned itinerary.
+   --------------------------------------------------------------------------- */
+
+.toggles { display: flex; gap: 8px; }
+
+.toggle {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;               /* thumb target */
+  padding: 0 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.toggle.on { color: var(--text); border-color: #3a424e; }
+.toggle:not(.on) .key { opacity: 0.3; }
+
+/* Miniature of the line each toggle controls, so the legend and the map can't
+   disagree about which is which. */
+.key { width: 18px; height: 3px; border-radius: 2px; flex: none; }
+.key.plan {
+  background: repeating-linear-gradient(
+    to right, var(--muted) 0 5px, transparent 5px 8px
+  );
+}
+.key.driven { background: #3dff9a; }
+
+.plan-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plan-day {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 14px 14px;
+}
+.plan-day.selected { border-color: var(--text); }
+
+/* Indented and tinted so a stay reads as hanging off the drive that arrived,
+   not as another leg of the journey. */
+.plan-day.is-rest {
+  margin-left: 18px;
+  border-left: 2px solid var(--warn);
+  background: var(--bg);
+}
+
+.plan-day-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+}
+
+.plan-day-n {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  flex: none;
+}
+
+/* Sits flush with the row until touched, so the itinerary reads as text rather
+   than as a form — but it is always a real input, one tap from the picker. */
+.plan-date {
+  font-family: inherit;
+  font-size: 16px;               /* below 16px iOS zooms the page on focus */
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 6px 8px;
+  min-height: 34px;
+}
+.plan-date:focus {
+  outline: none;
+  border-color: var(--good);
+  background: var(--bg);
+}
+
+/* A rest day's date isn't editable because it isn't stored — it's wherever the
+   stay puts it. Shown as text so there's no input inviting an edit that would
+   have nowhere to go. */
+.plan-date.static { color: var(--muted); font-weight: 500; }
+
+.plan-rest-btn {
+  flex: none;
+  border-radius: 10px;
+  font-family: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.plan-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.plan-actions:empty { display: none; }
+
+.plan-rest-btn.add {
+  padding: 8px 12px;
+  min-height: 38px;
+  background: none;
+  border: 1px dashed var(--line);
+  color: var(--muted);
+  font-size: 13px;
+}
+.plan-rest-btn.add:hover { color: var(--warn); border-color: var(--warn); }
+
+/* Notes read as the day's own handwriting: full width, wrapping, line breaks
+   preserved, and tappable anywhere on the text to edit. */
+.plan-note,
+.plan-note-input {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.45;
+  text-align: left;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.plan-note {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--text);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.plan-note:hover { border-color: var(--muted); }
+
+.plan-note-input {
+  background: var(--bg);
+  border: 1px solid var(--good);
+  color: var(--text);
+  resize: vertical;
+}
+.plan-note-input:focus { outline: none; }
+
+.plan-rest-btn.remove:hover { color: var(--bad); border-color: var(--bad); }
+
+/* The one control on a row that changes the record rather than the plan, so it
+   gets the affirmative colour when it's on. */
+.done-toggle {
+  flex: none;
+  margin-left: auto;
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: none;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.done-toggle.on {
+  background: var(--good);
+  border-color: var(--good);
+  color: #08090b;
+}
+
+/* A finished day steps back so the eye lands on where you actually are. The
+   green edge is what carries it, not the dimming, so it stays legible in sun. */
+.plan-day.done {
+  border-left: 3px solid var(--good);
+  opacity: 0.62;
+}
+.plan-day.done.selected { opacity: 1; }
+
+.badge.warn { color: var(--warn); border-color: var(--warn); }
+
+.plan-day-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  margin-top: 6px;
+  padding: 0;
+  background: none;
+  border: none;
+  text-align: left;
+  color: inherit;
+  font-family: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.plan-day-route { font-size: 16px; font-weight: 600; }
+.plan-day-meta { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.plan-day-via { font-size: 12px; color: var(--muted); opacity: 0.8; }
+.plan-est { color: var(--warn); }
+
+button.action.secondary.wide {
+  flex: none;
+  min-height: 56px;
+  font-size: 16px;
+  background: var(--panel);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
 /* MapLibre's default controls are light-themed; tone them down. */
 .maplibregl-ctrl-attrib {
   background: rgba(0, 0, 0, 0.5) !important;

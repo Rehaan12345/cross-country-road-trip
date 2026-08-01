@@ -30,6 +30,17 @@ export const day = (iso: string) =>
     day: "numeric",
   });
 
+// A `yyyy-mm-dd` calendar date, not an instant. It must be pinned to UTC: the
+// string parses as UTC midnight, so anywhere west of Greenwich the default
+// local formatting renders it as the day before.
+export const calendarDay = (date: string) =>
+  new Date(`${date}T00:00:00Z`).toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+
 export const clock = (iso: string) =>
   new Date(iso).toLocaleTimeString(undefined, {
     hour: "numeric",
