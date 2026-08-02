@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { roleOf } from "@/lib/role";
 
-// One user, one passphrase. The cookie is the whole session model.
+// Two passphrases, one cookie. The cookie is the whole session model.
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
@@ -15,8 +16,22 @@ export function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
-  if (req.cookies.get("auth")?.value === process.env.APP_PASSPHRASE) {
+  const role = roleOf(req.cookies.get("auth")?.value);
+
+  if (role === "owner") {
     return NextResponse.next();
+  }
+
+  if (role === "view") {
+    // The actual read-only boundary. Every write in this app is a non-GET call
+    // to /api/*, so one method check covers all of them — including endpoints
+    // added later, which is the point of gating on the method rather than on a
+    // list of paths. The disabled buttons in the UI are only an affordance;
+    // this is what makes them true.
+    if (req.method === "GET" || req.method === "HEAD") {
+      return NextResponse.next();
+    }
+    return new NextResponse("read-only", { status: 403 });
   }
 
   // APIs get a status code; pages get sent to the login form.

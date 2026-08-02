@@ -2,11 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Nav from "@/components/Nav";
+import { useReadOnly } from "@/components/ReadOnly";
 import TripRow, { type Trip } from "@/components/TripRow";
 import PlannedRow, { type Planned } from "@/components/PlannedRow";
 import { fetchJson } from "@/lib/api";
 
 export default function Trips() {
+  const readOnly = useReadOnly();
   const [trips, setTrips] = useState<Trip[] | null>(null);
   const [planned, setPlanned] = useState<Planned[]>([]);
   const [error, setError] = useState("");
@@ -68,7 +70,7 @@ export default function Trips() {
         ),
       )}
 
-      {(trips?.length ?? 0) > 0 && (
+      {!readOnly && (trips?.length ?? 0) > 0 && (
         <div className="note">Swipe a trip right to delete it</div>
       )}
     </main>

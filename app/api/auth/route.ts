@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { roleOf } from "@/lib/role";
 
 // POST-only; without this Next attempts to prerender it at build time and logs
 // a JSON-parse error it then recovers from. Noise, not a failure.
@@ -7,7 +8,8 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   const { passphrase } = await req.json();
 
-  if (!process.env.APP_PASSPHRASE || passphrase !== process.env.APP_PASSPHRASE) {
+  // Either passphrase gets you in; which one you used decides what you can do.
+  if (roleOf(passphrase) === null) {
     return NextResponse.json({ error: "incorrect" }, { status: 401 });
   }
 

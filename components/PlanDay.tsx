@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import PlaceSearch, { type Place } from "@/components/PlaceSearch";
+import { useReadOnly } from "@/components/ReadOnly";
 import { driveTime, MAX_NOTE, type ItineraryDay } from "@/lib/plan";
 import { calendarDay } from "@/lib/format";
 
@@ -39,6 +40,7 @@ export default function PlanDayRow({
   onAddSideTrip: (place: Place) => void;
   onRemoveSideTrip: (id: string) => void;
 }) {
+  const readOnly = useReadOnly();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(entry.note);
   const [adding, setAdding] = useState<null | "city" | "side">(null);
@@ -74,6 +76,10 @@ export default function PlanDayRow({
               {entry.of > 1 ? `night ${entry.nth}/${entry.of}` : "rest"}
             </span>
           </>
+        ) : readOnly ? (
+          // Same shape as a rest day's date: the value still matters to a
+          // viewer, the picker doesn't.
+          <span className="plan-date static">{calendarDay(entry.date)}</span>
         ) : (
           /* Committing on change rather than on blur: a native date picker IS
              the confirmation step, so there is nothing left to confirm. */
@@ -88,14 +94,24 @@ export default function PlanDayRow({
           />
         )}
 
-        <button
-          className={`done-toggle${entry.done ? " on" : ""}`}
-          onClick={onToggleDone}
-          aria-pressed={entry.done}
-        >
-          {entry.done ? "✓ " : ""}
-          {rest ? "Done" : "Driven"}
-        </button>
+        {/* Done/Driven is a fact about the trip as much as a control, so a
+            viewer keeps the tick — just not the ability to set it. */}
+        {readOnly ? (
+          entry.done && (
+            <span className="done-toggle on static">
+              ✓ {rest ? "Done" : "Driven"}
+            </span>
+          )
+        ) : (
+          <button
+            className={`done-toggle${entry.done ? " on" : ""}`}
+            onClick={onToggleDone}
+            aria-pressed={entry.done}
+          >
+            {entry.done ? "✓ " : ""}
+            {rest ? "Done" : "Driven"}
+          </button>
+        )}
       </div>
 
       <button className="plan-day-body" onClick={onSelect} aria-pressed={selected}>
@@ -127,13 +143,15 @@ export default function PlanDayRow({
               <span className="side-meta">
                 {t.miles} mi · {driveTime(t.minutes)} round trip
               </span>
-              <button
-                className="plan-rest-btn remove side-remove"
-                onClick={() => onRemoveSideTrip(t.id)}
-                aria-label={`Remove the side trip to ${t.name}`}
-              >
-                ×
-              </button>
+              {!readOnly && (
+                <button
+                  className="plan-rest-btn remove side-remove"
+                  onClick={() => onRemoveSideTrip(t.id)}
+                  aria-label={`Remove the side trip to ${t.name}`}
+                >
+                  ×
+                </button>
+              )}
             </li>
           ))}
         </ul>
@@ -142,7 +160,10 @@ export default function PlanDayRow({
       {/* Tap the text to edit, blur to save, Escape to abandon — the same
           edit-in-place pattern as renaming a trip. Enter inserts a newline
           here, so blur is the only commit. */}
-      {ownsNote && editing && (
+      {/* Notes are private to the owner. The API already blanks them for a
+          viewer, so `entry.note` is empty here regardless — this guard is the
+          second lock, not the only one. */}
+      {ownsNote && !readOnly && editing && (
         <textarea
           className="plan-note-input"
           value={draft}
@@ -161,7 +182,7 @@ export default function PlanDayRow({
         />
       )}
 
-      {ownsNote && !editing && entry.note && (
+      {ownsNote && !readOnly && !editing && entry.note && (
         <button
           className="plan-note"
           onClick={() => {
@@ -173,7 +194,7 @@ export default function PlanDayRow({
         </button>
       )}
 
-      {adding === "city" && (
+      {!readOnly && adding === "city" && (
         <PlaceSearch
           placeholder={`City between ${entry.kind === "drive" ? entry.from.name : here.name} and ${here.name}`}
           onPick={(p) => {
@@ -184,7 +205,7 @@ export default function PlanDayRow({
         />
       )}
 
-      {adding === "side" && (
+      {!readOnly && adding === "side" && (
         <PlaceSearch
           placeholder={`Side trip from ${here.name}`}
           onPick={(p) => {
@@ -195,83 +216,87 @@ export default function PlanDayRow({
         />
       )}
 
-      <div className="plan-actions">
-        {ownsNote && !editing && !entry.note && (
-          <button
-            className="plan-rest-btn add"
-            onClick={() => {
-              setDraft("");
-              setEditing(true);
-            }}
-          >
-            + note
-          </button>
-        )}
-
-        {/* Offered on the day that arrives somewhere, which is the only day
-            from which lingering there makes sense. The first and last stops
-            never get one: leaving later is the departure date, and arriving
-            ends the trip. */}
-        {!rest && canRest && (
-          <button
-            className="plan-rest-btn add"
-            onClick={onAddRest}
-            aria-label={`Add a rest day in ${here.name}`}
-          >
-            + rest day
-          </button>
-        )}
-
-        {rest && (
-          <button
-            className="plan-rest-btn add remove"
-            onClick={onRemoveRest}
-            aria-label={`Remove a rest night in ${here.name}`}
-          >
-            − rest day
-          </button>
-        )}
-
-        {!rest && (
-          <>
+      {/* Every control below writes to the plan, so the row goes away wholesale
+          for a viewer rather than becoming a line of dead grey pills. */}
+      {!readOnly && (
+        <div className="plan-actions">
+          {ownsNote && !editing && !entry.note && (
             <button
               className="plan-rest-btn add"
-              onClick={() => setAdding("side")}
-              disabled={busy}
-              aria-label={`Add a side trip from ${here.name}`}
+              onClick={() => {
+                setDraft("");
+                setEditing(true);
+              }}
             >
-              + side trip
+              + note
             </button>
+          )}
 
-            {/* Splits THIS drive in two. Inserting after the origin is the
-                useful reading of "add a city here": the leg you're looking at
-                is the one that's too long. */}
+          {/* Offered on the day that arrives somewhere, which is the only day
+              from which lingering there makes sense. The first and last stops
+              never get one: leaving later is the departure date, and arriving
+              ends the trip. */}
+          {!rest && canRest && (
             <button
               className="plan-rest-btn add"
-              onClick={() => setAdding("city")}
-              disabled={busy}
-              aria-label={`Add a city between ${entry.from.name} and ${entry.to.name}`}
+              onClick={onAddRest}
+              aria-label={`Add a rest day in ${here.name}`}
             >
-              + city
+              + rest day
             </button>
+          )}
 
-            {canRemoveDestination && (
+          {rest && (
+            <button
+              className="plan-rest-btn add remove"
+              onClick={onRemoveRest}
+              aria-label={`Remove a rest night in ${here.name}`}
+            >
+              − rest day
+            </button>
+          )}
+
+          {!rest && (
+            <>
               <button
-                className="plan-rest-btn add remove"
-                onClick={() => {
-                  if (confirmRemove) onRemoveCity();
-                  else setConfirmRemove(true);
-                }}
-                onBlur={() => setConfirmRemove(false)}
+                className="plan-rest-btn add"
+                onClick={() => setAdding("side")}
                 disabled={busy}
-                aria-label={`Remove ${here.name} from the route`}
+                aria-label={`Add a side trip from ${here.name}`}
               >
-                {confirmRemove ? `remove ${here.name}?` : "− city"}
+                + side trip
               </button>
-            )}
-          </>
-        )}
-      </div>
+
+              {/* Splits THIS drive in two. Inserting after the origin is the
+                  useful reading of "add a city here": the leg you're looking at
+                  is the one that's too long. */}
+              <button
+                className="plan-rest-btn add"
+                onClick={() => setAdding("city")}
+                disabled={busy}
+                aria-label={`Add a city between ${entry.from.name} and ${entry.to.name}`}
+              >
+                + city
+              </button>
+
+              {canRemoveDestination && (
+                <button
+                  className="plan-rest-btn add remove"
+                  onClick={() => {
+                    if (confirmRemove) onRemoveCity();
+                    else setConfirmRemove(true);
+                  }}
+                  onBlur={() => setConfirmRemove(false)}
+                  disabled={busy}
+                  aria-label={`Remove ${here.name} from the route`}
+                >
+                  {confirmRemove ? `remove ${here.name}?` : "− city"}
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </li>
   );
 }

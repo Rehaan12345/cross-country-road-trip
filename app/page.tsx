@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import dynamicImport from "next/dynamic";
 import Nav from "@/components/Nav";
+import { useReadOnly } from "@/components/ReadOnly";
 import { fetchJson } from "@/lib/api";
 import { miles, stopwatch } from "@/lib/format";
 
@@ -49,6 +50,7 @@ function health(lastPingAt: string | null, now: number) {
 }
 
 export default function Home() {
+  const readOnly = useReadOnly();
   const [status, setStatus] = useState<Status | null>(null);
   const [journey, setJourney] = useState<Journey | null>(null);
   const [loadError, setLoadError] = useState("");
@@ -176,7 +178,7 @@ export default function Home() {
           <button
             className="action secondary"
             onClick={() => post("/api/trips/pause")}
-            disabled={busy}
+            disabled={busy || readOnly}
           >
             {paused ? "Resume" : "Pause"}
           </button>
@@ -184,7 +186,7 @@ export default function Home() {
         <button
           className={`action ${active ? "stop" : ""}`}
           onClick={() => post(active ? "/api/trips/stop" : "/api/trips/start")}
-          disabled={busy || status === null}
+          disabled={busy || readOnly || status === null}
         >
           {busy ? "…" : active ? "Stop" : "Start"}
         </button>

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useReadOnly } from "@/components/ReadOnly";
 
 const LINKS = [
   { href: "/", label: "Now" },
@@ -11,6 +12,7 @@ const LINKS = [
 
 export default function Nav() {
   const pathname = usePathname();
+  const readOnly = useReadOnly();
 
   return (
     <nav className="nav">
@@ -23,6 +25,8 @@ export default function Nav() {
           {l.label}
         </Link>
       ))}
+      {/* Without this the disabled controls just look broken. */}
+      {readOnly && <span className="view-badge">view only</span>}
     </nav>
   );
 }

@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import Link from "next/link";
+import { useReadOnly } from "@/components/ReadOnly";
 import { miles, duration, day, clock } from "@/lib/format";
 
 export type Trip = {
@@ -26,6 +27,7 @@ export default function TripRow({
   onDeleted: (id: string) => void;
   onRenamed: (id: string, label: string | null) => void;
 }) {
+  const readOnly = useReadOnly();
   const [dx, setDx] = useState(0);
   const [open, setOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -107,13 +109,18 @@ export default function TripRow({
 
   return (
     <div className="swipe">
-      <button
-        className={`swipe-action${confirming ? " confirming" : ""}`}
-        onClick={remove}
-        aria-label={confirming ? "Confirm delete" : "Delete trip"}
-      >
-        {confirming ? "Sure?" : "Delete"}
-      </button>
+      {/* Not rendered at all for a viewer: the swipe gesture IS this button's
+          affordance, and a row that slides open onto a dead control is worse
+          than a row that doesn't slide. */}
+      {!readOnly && (
+        <button
+          className={`swipe-action${confirming ? " confirming" : ""}`}
+          onClick={remove}
+          aria-label={confirming ? "Confirm delete" : "Delete trip"}
+        >
+          {confirming ? "Sure?" : "Delete"}
+        </button>
+      )}
 
       <div
         className="swipe-content"
@@ -123,6 +130,7 @@ export default function TripRow({
           dragged.current = false;
         }}
         onTouchMove={(e) => {
+          if (readOnly) return;
           const d = e.touches[0].clientX - startX.current;
           if (Math.abs(d) > 6) dragged.current = true;
           // Left-to-right only; a leftward drag closes an open row.
@@ -130,6 +138,7 @@ export default function TripRow({
           if (open && d < 0) setDx(Math.max(OPEN_PX + d, 0));
         }}
         onTouchEnd={() => {
+          if (readOnly) return;
           if (!open) setOpen(dx > SNAP_PX);
           else if (dx < OPEN_PX - SNAP_PX) close();
           setDx(0);
@@ -162,16 +171,18 @@ export default function TripRow({
             <div className="row-sub">{duration(trip.duration_s)}</div>
           </div>
 
-          <button
-            className="row-edit"
-            onClick={() => {
-              close();
-              setEditing(true);
-            }}
-            aria-label="Rename trip"
-          >
-            ✎
-          </button>
+          {!readOnly && (
+            <button
+              className="row-edit"
+              onClick={() => {
+                close();
+                setEditing(true);
+              }}
+              aria-label="Rename trip"
+            >
+              ✎
+            </button>
+          )}
         </div>
       </div>
     </div>

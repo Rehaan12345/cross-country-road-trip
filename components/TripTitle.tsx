@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useReadOnly } from "@/components/ReadOnly";
 
 // Tap the title to rename. No modal, no separate edit mode toggle — one tap in,
 // blur or Enter to save, Escape to abandon.
@@ -13,6 +14,7 @@ export default function TripTitle({
   label: string | null;
   fallback: string;
 }) {
+  const readOnly = useReadOnly();
   const [value, setValue] = useState(label ?? "");
   const [saved, setSaved] = useState(label ?? "");
   const [editing, setEditing] = useState(false);
@@ -38,6 +40,12 @@ export default function TripTitle({
       setValue(saved); // roll back to what the server still holds
       setError("Could not rename");
     }
+  }
+
+  // The pencil is the only thing that says this is editable, so a viewer gets a
+  // plain heading rather than a heading that ignores taps.
+  if (readOnly) {
+    return <h1 className="title">{saved || fallback}</h1>;
   }
 
   if (editing) {
