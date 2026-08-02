@@ -25,7 +25,6 @@ const MAP_STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.j
 // more punch than body text does.
 const C = {
   planLine: "#8b929c",   // --muted
-  planDone: "#d5dae1",   // between --muted and --text: behind you, not the GPS trace
   planGlow: "#e8eaed",   // --text, for the selected leg
   side: "#f5a623",       // --warn, same family as a rest stop
   driven: "#3dff9a",     // brighter sibling of --good
@@ -181,10 +180,13 @@ export default function PlanMap({
       map.addSource("journey", { type: "geojson", data: EMPTY });
       map.addSource("stops", { type: "geojson", data: EMPTY });
 
+      // Casings are split the same way the lines are, so each half can follow
+      // its own toggle without leaving the other drawn on bare basemap.
       map.addLayer({
         id: "plan-casing",
         type: "line",
         source: "plan",
+        filter: ["==", ["get", "done"], false],
         layout: { "line-cap": "butt", "line-join": "round" },
         paint: {
           "line-color": C.casing,
@@ -193,10 +195,23 @@ export default function PlanMap({
         },
       });
 
-      // Dashed ahead of you, solid behind. Three line states have to stay
-      // distinguishable at a glance — plan ahead, plan completed, and the GPS
-      // trace — so completed plan goes solid and pale rather than green, which
-      // would read as a second recorded route.
+      map.addLayer({
+        id: "plan-done-casing",
+        type: "line",
+        source: "plan",
+        filter: ["==", ["get", "done"], true],
+        layout: { "line-cap": "butt", "line-join": "round" },
+        paint: {
+          "line-color": C.casing,
+          "line-opacity": 0.9,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 3, 7, 10, 13],
+        },
+      });
+
+      // Three line states still have to stay distinguishable at a glance, but
+      // the axis changed: colour now means covered-or-not, and the dash means
+      // who says so. Grey dashed = still ahead of you. Green dashed = you
+      // marked it driven. Green solid = the recorder traced it.
       map.addLayer({
         id: "plan",
         type: "line",
@@ -215,10 +230,11 @@ export default function PlanMap({
         type: "line",
         source: "plan",
         filter: ["==", ["get", "done"], true],
-        layout: { "line-cap": "round", "line-join": "round" },
+        layout: { "line-cap": "butt", "line-join": "round" },
         paint: {
-          "line-color": C.planDone,
-          "line-width": ["interpolate", ["linear"], ["zoom"], 3, 3, 10, 6],
+          "line-color": C.driven,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 3, 3.5, 10, 7],
+          "line-dasharray": [2, 1.4],
         },
       });
 
@@ -407,10 +423,14 @@ export default function PlanMap({
     const set = (id: string, on: boolean) =>
       map.setLayoutProperty(id, "visibility", on ? "visible" : "none");
 
-    for (const id of ["plan-casing", "plan", "plan-done", "plan-selected", "side", "stops", "stop-labels", "stop-selected"]) {
+    // "Plan" is what's still ahead; "Recorded" is everything you've covered,
+    // however it was established. A leg you marked driven belongs to the
+    // second group — it used to hide with the plan, so turning the plan off to
+    // ask "what have I covered?" erased the very thing being asked about.
+    for (const id of ["plan-casing", "plan", "plan-selected", "side", "stops", "stop-labels", "stop-selected"]) {
       set(id, showPlan);
     }
-    for (const id of ["journey-casing", "journey"]) {
+    for (const id of ["plan-done-casing", "plan-done", "journey-casing", "journey"]) {
       set(id, showDriven);
     }
   }, [showPlan, showDriven, ready]);

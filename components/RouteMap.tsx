@@ -99,10 +99,10 @@ export default function RouteMap({
 }: {
   geojson: Geometry | null;
   /**
-   * Planned legs marked driven on the Route tab. Drawn pale and solid UNDER the
-   * recorded line, never merged into it: one is where the phone says you went,
-   * the other is where you say you went, and at a glance they must not read the
-   * same. Matches the completed-plan colour on the Route tab.
+   * Planned legs marked driven on the Route tab. Drawn in the recorded green
+   * but dashed, UNDER the recorded line: one journey, with the dash saying
+   * which parts the phone traced and which parts you asserted. Matches the
+   * completed-plan treatment on the Route tab.
    */
   planned?: Geometry | null;
   /** Last received ping, as [lng, lat]. Drawn above everything else. */
@@ -158,15 +158,33 @@ export default function RouteMap({
       // Added first so it sits beneath the recorded route: where the GPS
       // actually went should win wherever the two overlap.
       map.addSource("planned", { type: "geojson", data: EMPTY });
+
+      map.addLayer({
+        id: "planned-casing",
+        type: "line",
+        source: "planned",
+        layout: { "line-cap": "butt", "line-join": "round" },
+        paint: {
+          "line-color": "#00120a",
+          "line-opacity": 0.95,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 3, 7, 10, 13],
+        },
+      });
+
+      // Same green as the GPS trace, because this is the same journey — a day
+      // you drove is a day you drove, and a pale line read as "not really
+      // covered". The dashes carry the provenance instead: solid means the
+      // recorder traced it, dashed means you vouched for it. That distinction
+      // has to survive, or there's no way to tell when the recorder died.
       map.addLayer({
         id: "planned",
         type: "line",
         source: "planned",
-        layout: { "line-cap": "round", "line-join": "round" },
+        layout: { "line-cap": "butt", "line-join": "round" },
         paint: {
-          "line-color": "#d5dae1",
-          "line-opacity": 0.75,
-          "line-width": ["interpolate", ["linear"], ["zoom"], 3, 3, 10, 6],
+          "line-color": "#3dff9a",
+          "line-width": ["interpolate", ["linear"], ["zoom"], 3, 3.5, 10, 7],
+          "line-dasharray": [2, 1.4],
         },
       });
 
