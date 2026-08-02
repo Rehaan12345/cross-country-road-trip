@@ -99,9 +99,8 @@ export default function RouteMap({
 }: {
   geojson: Geometry | null;
   /**
-   * Planned legs marked driven on the Route tab. Drawn in the recorded green
-   * but dashed, UNDER the recorded line: one journey, with the dash saying
-   * which parts the phone traced and which parts you asserted. Matches the
+   * Planned legs marked driven on the Route tab. Drawn exactly like the
+   * recorded line and UNDER it: on the map, covered is covered. Matches the
    * completed-plan treatment on the Route tab.
    */
   planned?: Geometry | null;
@@ -163,28 +162,27 @@ export default function RouteMap({
         id: "planned-casing",
         type: "line",
         source: "planned",
-        layout: { "line-cap": "butt", "line-join": "round" },
+        layout: { "line-cap": "round", "line-join": "round" },
         paint: {
           "line-color": "#00120a",
           "line-opacity": 0.95,
-          "line-width": ["interpolate", ["linear"], ["zoom"], 3, 7, 10, 13],
+          "line-width": ["interpolate", ["linear"], ["zoom"], 3, 8, 10, 16],
         },
       });
 
-      // Same green as the GPS trace, because this is the same journey — a day
-      // you drove is a day you drove, and a pale line read as "not really
-      // covered". The dashes carry the provenance instead: solid means the
-      // recorder traced it, dashed means you vouched for it. That distinction
-      // has to survive, or there's no way to tell when the recorder died.
+      // Deliberately identical to the recorded line below — same green, same
+      // width, same caps. Covered road is covered road, so a journey that is
+      // part GPS and part asserted reads as one unbroken line rather than as
+      // two grades of progress. Which is which lives on the Trips tab, where
+      // an asserted day carries a "no GPS" badge.
       map.addLayer({
         id: "planned",
         type: "line",
         source: "planned",
-        layout: { "line-cap": "butt", "line-join": "round" },
+        layout: { "line-cap": "round", "line-join": "round" },
         paint: {
           "line-color": "#3dff9a",
-          "line-width": ["interpolate", ["linear"], ["zoom"], 3, 3.5, 10, 7],
-          "line-dasharray": [2, 1.4],
+          "line-width": ["interpolate", ["linear"], ["zoom"], 3, 4, 10, 9],
         },
       });
 

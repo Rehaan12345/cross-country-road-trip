@@ -200,18 +200,18 @@ export default function PlanMap({
         type: "line",
         source: "plan",
         filter: ["==", ["get", "done"], true],
-        layout: { "line-cap": "butt", "line-join": "round" },
+        layout: { "line-cap": "round", "line-join": "round" },
         paint: {
           "line-color": C.casing,
-          "line-opacity": 0.9,
-          "line-width": ["interpolate", ["linear"], ["zoom"], 3, 7, 10, 13],
+          "line-opacity": 0.95,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 3, 8, 10, 16],
         },
       });
 
-      // Three line states still have to stay distinguishable at a glance, but
-      // the axis changed: colour now means covered-or-not, and the dash means
-      // who says so. Grey dashed = still ahead of you. Green dashed = you
-      // marked it driven. Green solid = the recorder traced it.
+      // Two states, one axis: dashed grey is road still ahead of you, solid
+      // green is road behind you. How a completed leg was established — GPS or
+      // your own tick — is not a distinction the map draws; the Trips tab
+      // carries it on the "no GPS" badge.
       map.addLayer({
         id: "plan",
         type: "line",
@@ -230,11 +230,10 @@ export default function PlanMap({
         type: "line",
         source: "plan",
         filter: ["==", ["get", "done"], true],
-        layout: { "line-cap": "butt", "line-join": "round" },
+        layout: { "line-cap": "round", "line-join": "round" },
         paint: {
           "line-color": C.driven,
-          "line-width": ["interpolate", ["linear"], ["zoom"], 3, 3.5, 10, 7],
-          "line-dasharray": [2, 1.4],
+          "line-width": ["interpolate", ["linear"], ["zoom"], 3, 4, 10, 9],
         },
       });
 
