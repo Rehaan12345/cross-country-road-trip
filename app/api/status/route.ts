@@ -23,7 +23,7 @@ export async function GET() {
   // the recorder, which is immune to phone clock skew and to replayed backlogs.
   const { data: last } = await supabase
     .from("points")
-    .select("received_at")
+    .select("received_at, lat, lon")
     .order("received_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -50,6 +50,9 @@ export async function GET() {
     stats,
     pausedAt,
     lastPingAt: last?.received_at ?? null,
+    // Where that ping was. Same row as lastPingAt, so the marker on the map and
+    // the age beside it can never describe two different pings.
+    lastPosition: last ? { lat: last.lat, lon: last.lon } : null,
     // Lets the client correct for its own clock being wrong, so the health
     // indicator doesn't depend on the viewing device's time being right.
     serverNow: new Date().toISOString(),

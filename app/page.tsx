@@ -18,6 +18,7 @@ type Status = {
   stats: { distance_m: number; moving_s: number; paused_s: number } | null;
   pausedAt: string | null;
   lastPingAt: string | null;
+  lastPosition: { lat: number; lon: number } | null;
   serverNow: string | null;
 };
 
@@ -147,6 +148,14 @@ export default function Home() {
       <RouteMap
         geojson={journey?.geojson ?? null}
         planned={journey?.plannedGeojson ?? null}
+        current={
+          status?.lastPosition
+            ? [status.lastPosition.lon, status.lastPosition.lat]
+            : null
+        }
+        // Same threshold the health line uses to stop calling a ping recent, so
+        // the marker and the label above it never contradict each other.
+        currentStale={h.cls === "bad"}
         className="map map-compact"
       />
 

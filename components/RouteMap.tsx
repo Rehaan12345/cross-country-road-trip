@@ -40,15 +40,18 @@ function rawCoords(g: Geometry | null): [number, number][] {
 
 // A single junk coordinate — a null-island (0,0) ping, or anything out of range
 // — would stretch fitBounds across the planet and shrink the route to nothing.
-function coordsOf(g: Geometry | null): [number, number][] {
-  return rawCoords(g).filter(
-    ([lng, lat]) =>
-      Number.isFinite(lng) &&
-      Number.isFinite(lat) &&
-      Math.abs(lng) <= 180 &&
-      Math.abs(lat) <= 90 &&
-      !(lng === 0 && lat === 0),
+function isValid([lng, lat]: [number, number]) {
+  return (
+    Number.isFinite(lng) &&
+    Number.isFinite(lat) &&
+    Math.abs(lng) <= 180 &&
+    Math.abs(lat) <= 90 &&
+    !(lng === 0 && lat === 0)
   );
+}
+
+function coordsOf(g: Geometry | null): [number, number][] {
+  return rawCoords(g).filter(isValid);
 }
 
 const EMPTY = { type: "FeatureCollection" as const, features: [] };
@@ -90,6 +93,8 @@ function endpointFeatures(g: Geometry | null) {
 export default function RouteMap({
   geojson,
   planned = null,
+  current = null,
+  currentStale = false,
   className = "map",
 }: {
   geojson: Geometry | null;
@@ -100,6 +105,14 @@ export default function RouteMap({
    * same. Matches the completed-plan colour on the Route tab.
    */
   planned?: Geometry | null;
+  /** Last received ping, as [lng, lat]. Drawn above everything else. */
+  current?: [number, number] | null;
+  /**
+   * The last ping is old enough that calling it a current position would be a
+   * lie. Drawn grey instead of blue rather than hidden — a stale marker still
+   * answers "where did the recorder die?".
+   */
+  currentStale?: boolean;
   className?: string;
 }) {
   const container = useRef<HTMLDivElement>(null);
@@ -204,6 +217,32 @@ export default function RouteMap({
         },
       });
 
+      // Current position, last so it sits above the endpoint dots it will often
+      // overlap: a soft halo under a hard core, so it reads as "here, now"
+      // rather than as another route marker.
+      map.addSource("current", { type: "geojson", data: EMPTY });
+      map.addLayer({
+        id: "current-halo",
+        type: "circle",
+        source: "current",
+        paint: {
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 3, 12, 10, 22],
+          "circle-color": ["case", ["get", "stale"], "#8a94a0", "#4da3ff"],
+          "circle-opacity": 0.2,
+        },
+      });
+      map.addLayer({
+        id: "current",
+        type: "circle",
+        source: "current",
+        paint: {
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 3, 5, 10, 8],
+          "circle-color": "#ffffff",
+          "circle-stroke-width": 3.5,
+          "circle-stroke-color": ["case", ["get", "stale"], "#8a94a0", "#4da3ff"],
+        },
+      });
+
       setReady(true);
     });
 
@@ -260,6 +299,46 @@ export default function RouteMap({
     map.fitBounds(bounds, { padding: 40, duration: 0, maxZoom: 14 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, plannedKey, ready]);
+
+  // The current position moves on every poll, so it gets its own effect: the
+  // marker must be able to move without the view refitting itself under the
+  // user's fingers every ten seconds.
+  const framedOnCurrent = useRef(false);
+  // The parent re-renders once a second to run its clock; keyed on content so
+  // the journey geometry isn't rewalked on every tick.
+  const hasRoute = useMemo(
+    () => coordsOf(geojson).length > 0 || coordsOf(planned).length > 0,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [key, plannedKey],
+  );
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+
+    const source = map.getSource("current") as GeoJSONSource | undefined;
+    if (!source) return;
+
+    if (!current || !isValid(current)) {
+      source.setData(EMPTY);
+      return;
+    }
+
+    source.setData({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: current },
+      properties: { stale: currentStale },
+    });
+
+    // With no route drawn there is nothing else framing the map, so the first
+    // fix decides the view. Only the first — after that, panning stays the
+    // user's business.
+    if (!hasRoute && !framedOnCurrent.current) {
+      framedOnCurrent.current = true;
+      map.easeTo({ center: current, zoom: 9, duration: 0 });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current?.[0], current?.[1], currentStale, hasRoute, ready]);
 
   return (
     <div className={className} ref={container}>
